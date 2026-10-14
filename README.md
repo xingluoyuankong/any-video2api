@@ -1,6 +1,6 @@
 # Any Video2API
 
-> 把即梦（jimeng）、TikTok Symphony、扣子（coze）三个 AI 视频生成站点，统一为**一套 OpenAI 兼容接口 + 一个可插拔多渠道路由平台 + 一个可视化控制台**。
+> 把即梦（jimeng）、TikTok Symphony、扣子（coze）、豆包（doubao）四个 AI 视频生成站点，统一为**一套 OpenAI 兼容接口 + 一个可插拔多渠道路由平台 + 一个可视化控制台**。
 
 一个进程、一套基座、N 个渠道。新增渠道 = 1 份描述符 + 1 个适配器，平台代码 0 改动。
 
@@ -36,10 +36,10 @@
 | **登录态延长** | 过期前刷新 + 心跳保活 + 凭据冗余备份 + OAuth 自动续期 |
 | **账号级代理** | 一账号一固定出口 IP + 出口一致性校验 + 订阅池 |
 | **多租户密钥** | 多 API Key、启停、渠道白名单 |
-| **可视化控制台** | 9 个页面，按平台分组管理账号 / 代理 / 任务 / 模型 / 配置 |
+| **可视化控制台** | 9 个页面，账号按渠道标签页切分，统一管理账号 / 代理 / 任务 / 模型 / 配置 |
 | **零浏览器依赖** | 协议优先，Playwright 仅作可选兜底与诊断 |
 
-**已内置渠道**：`jimeng`（即梦）、`tiktok`（Symphony CUE）、`coze`（扣子）。
+**已内置渠道**：`jimeng`（即梦）、`tiktok`（Symphony CUE）、`coze`（扣子）、`doubao`（豆包 / Seedance）。
 
 ---
 
@@ -117,7 +117,7 @@ curl http://127.0.0.1:8800/v1/videos/generations/<task_id> -H "X-API-Key: $KEY"
 | 页面 | 功能 |
 |---|---|
 | **概览** | 统计卡（渠道/账号/任务）+ 渠道能力卡 |
-| **账号管理** | 按平台分组表格 + 批量检查/签到/保活/刷新额度 + 出口 IP/积分/成功失败列 |
+| **账号管理** | 渠道标签页（全部 / 即梦 / TikTok / 扣子 / 豆包）+ 批量检查/签到/保活/刷新额度 + 出口 IP/积分/成功失败列 |
 | **代理出口** | 账号代理绑定 + 出口校验 + 批量导入 + 订阅池（global/cn） |
 | **任务** | 任务列表、状态筛选、取消 |
 | **密钥** | 多 API Key 管理（查看/启停/删除） |
@@ -202,6 +202,7 @@ flowchart TB
         J[jimeng]:::i
         T[tiktok]:::i
         Z[coze]:::i
+        D[doubao]:::i
     end
     subgraph PL[平台基座 src/platform]
         ACC[accounts 账号池]
@@ -218,8 +219,8 @@ flowchart TB
     O --> R
     P --> PRX
     S --> STA
-    R --> B --> J & T & Z
-    J & T & Z --> TR
+    R --> B --> J & T & Z & D
+    J & T & Z & D --> TR
     JOB --> ACC & MED & ANT
     ACC --> PRX & SES
     classDef i fill:#e8f4ff,stroke:#4a90d9
@@ -276,7 +277,7 @@ any-video2api/
 ├─ main.py                     单入口（FastAPI + 鉴权 + 静态 + 控制台）
 ├─ config/
 │  ├─ setting.toml             平台配置
-│  └─ channels/*.json          渠道描述符（jimeng / tiktok / coze）
+│  └─ channels/*.json          渠道描述符（jimeng / tiktok / coze / doubao）
 ├─ src/
 │  ├─ core/                    公共件：config / crypto / errors / models
 │  ├─ platform/                平台基座
@@ -294,7 +295,7 @@ any-video2api/
 │  ├─ channels/                渠道适配器
 │  │  ├─ base.py               ★ 接口契约
 │  │  ├─ registry.py           自动发现 + 热重载
-│  │  └─ jimeng.py / tiktok.py / coze.py
+│  │  └─ jimeng.py / tiktok.py / coze.py / doubao.py
 │  └─ api/                     HTTP 路由（8 个模块）
 ├─ static/                     控制台前端（index.html / style.css / app.js）
 ├─ tests/                      集成冒烟测试
@@ -414,7 +415,9 @@ max_per_ip = 3
 ## 安全
 
 - **控制台**：账号密码登录（PBKDF2-HMAC-SHA256 加盐 20 万轮，恒定时间比较防用户名枚举）；
-  会话 cookie 为 `HttpOnly` + `SameSite=Lax`，库内只存 token 摘要，7 天滑动续期，改密即吊销全部会话
+  会话 cookie 为 `HttpOnly` + `SameSite=Lax`，库内只存 token 摘要，7 天滑动续期，改密即吊销全部会话；
+  登录接口按 **IP + 用户名双维度滑动窗口限流**（超限 429）防暴力破解，成功/失败/限流均落审计日志；
+  HTTPS 访问时自动置 `Secure`（识别 `X-Forwarded-Proto`）
 - **程序接口**：`/v1/*` 只认 API Key；控制台会话不能调用生成接口
 - 凭据落库前加密（Windows DPAPI / 非 Windows XOR 回退）
 - 审计只记录 `body_shape` 与请求头**名**，值全部脱敏，凭据零落盘
