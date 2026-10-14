@@ -163,7 +163,7 @@ const TITLES = {
 const state = {
   key: '',            // 已弃用：控制台改用账号密码会话（保留占位以兼容旧代码）
   user: null,         // 当前登录用户 {username, role}
-  theme: document.documentElement.getAttribute('data-theme') || 'dark',
+  theme: document.documentElement.getAttribute('data-theme') || 'light',
   route: '',
   channels: [],
   loadErrors: {},
@@ -763,8 +763,62 @@ let impTab = 'paste';
 function switchImpTab(tab) {
   impTab = tab;
   $$('#impTabs button').forEach(b => b.classList.toggle('active', b.dataset.impTab === tab));
-  $('#impPane-paste').classList.toggle('hidden', tab !== 'paste');
-  $('#impPane-file').classList.toggle('hidden', tab !== 'file');
+  ['paste', 'file', 'sms', 'pwd', 'oauth'].forEach(t => {
+    const el = $('#impPane-' + t);
+    if (el) el.classList.toggle('hidden', t !== tab);
+  });
+  // 按渠道提示该渠道声明的登录方式
+  const ch = $('#impChannel').value;
+  const meta = state.channels.find(c => c.name === ch) || {};
+  const methods = (meta.capabilities && meta.capabilities.login_methods) || [];
+  const noteId = { sms: 'impSmsNote', pwd: 'impPwdNote', oauth: 'impOauthNote' }[tab];
+  const label = { sms: '手机号+短信', pwd: '账密', oauth: '授权链接' }[tab];
+  if (noteId && $('#' + noteId)) {
+    const el = $('#' + noteId);
+    if (methods.length && methods.indexOf(tab) < 0) {
+      el.className = 'notice warn';
+      el.textContent = label + '：该渠道未声明支持此方式，可能失败。该渠道支持：' + methods.join(' / ');
+    } else {
+      el.className = 'notice';
+    }
+  }
+}
+
+/* 发送短信验证码（手机号登录） */
+async function sendSmsCode() {
+  const channel = $('#impChannel').value;
+  const phone = $('#impPhone').value.trim();
+  const area = $('#impAreaCode').value.trim() || '86';
+  if (!channel) { toast('请选择渠道', 'warn'); return; }
+  if (!phone) { toast('请填写手机号', 'warn'); return; }
+  const btn = $('#impSendSms');
+  btn.disabled = true; btn.textContent = '发送中…';
+  const r = await safe(api('/api/accounts/login/sms/send', {
+    method: 'POST', body: { channel, phone, area_code: area }
+  }));
+  btn.disabled = false; btn.textContent = '发送验证码';
+  if (r.ok) toast('验证码已发送，请查收短信', 'ok');
+  else toast('发送失败：' + r.error, 'bad');
+}
+
+/* 生成授权链接 / 书签脚本（OAuth 方式） */
+async function startOauth() {
+  const channel = $('#impChannel').value;
+  if (!channel) { toast('请选择渠道', 'warn'); return; }
+  const out = $('#impOauthOut');
+  out.innerHTML = '<div class="loading"><div class="spinner"></div>生成中…</div>';
+  const r = await safe(api('/api/accounts/login/oauth?channel=' + encodeURIComponent(channel)));
+  if (!r.ok) { out.innerHTML = '<div class="notice bad">生成失败：' + esc(r.error) + '</div>'; return; }
+  const d = r.data || {};
+  const box = (label, val) => val
+    ? '<label class="field"><span>' + esc(label) + '</span>' +
+      '<div class="reveal-box"><code>' + esc(val) + '</code>' +
+      '<button class="btn xs" data-act="copy-text" data-text="' + esc(val) + '">复制</button></div></label>'
+    : '';
+  const html = box('授权链接（用无痕窗口打开）', d.login_url) +
+    box('登录后执行（F12 → Console 粘贴）', d.bookmarklet) +
+    (d.hint ? '<div class="hint">' + esc(d.hint) + '</div>' : '');
+  out.innerHTML = html || '<div class="notice warn">该渠道未提供授权链接</div>';
 }
 
 function openImport() {
@@ -799,6 +853,31 @@ async function submitImport() {
     else toast('导入失败：' + r.error, 'bad');
     return;
   }
+
+  if (impTab === 'sms') {
+    const phone = $('#impPhone').value.trim();
+    const code = $('#impSmsCode').value.trim();
+    const area = $('#impAreaCode').value.trim() || '86';
+    if (!phone || !code) { toast('请填写手机号与验证码', 'warn'); return; }
+    const r = await safe(api('/api/accounts/login/sms', {
+      method: 'POST', body: { channel, phone, code, area_code: area, name, proxy, note }
+    }));
+    if (r.ok) { toast('登录成功', 'ok'); closeModal('m-import'); loadAccounts(); }
+    else toast('登录失败：' + r.error, 'bad');
+    return;
+  }
+  if (impTab === 'pwd') {
+    const account = $('#impLoginUser').value.trim();
+    const password = $('#impLoginPass').value;
+    if (!account || !password) { toast('请填写账号与密码', 'warn'); return; }
+    const r = await safe(api('/api/accounts/login/password', {
+      method: 'POST', body: { channel, account, password, name, proxy, note }
+    }));
+    if (r.ok) { toast('登录成功', 'ok'); closeModal('m-import'); loadAccounts(); }
+    else toast('登录失败：' + r.error, 'bad');
+    return;
+  }
+  if (impTab === 'oauth') { toast('请先点「生成授权链接」，再按提示回传 Cookie', 'warn'); return; }
 
   const raw = $('#impCookies').value.trim();
   let cookies = {};
@@ -1788,6 +1867,12 @@ async function handleAction(act, el) {
   const id = el.dataset.id || '';
   switch (act) {
     case 'open-key': openKeyModal(); break;
+    case 'copy-text': {
+      const t = el.dataset.text || '';
+      try { await navigator.clipboard.writeText(t); toast('已复制', 'ok'); }
+      catch (_) { toast('复制失败，请手动选择', 'warn'); }
+      break;
+    }
     case 'import-open': openImport(); break;
     case 'acct-tab': {
       state.acctChannel = el.dataset.ch || '';
@@ -1910,6 +1995,9 @@ function wire() {
   // 导入
   $$('#impTabs button').forEach(b => b.addEventListener('click', () => switchImpTab(b.dataset.impTab)));
   $('#impSubmit').addEventListener('click', submitImport);
+  $('#impSendSms').addEventListener('click', sendSmsCode);
+  $('#impOauthStart').addEventListener('click', startOauth);
+  $('#impChannel').addEventListener('change', () => switchImpTab(impTab));
 
   // 编辑
   $('#editSave').addEventListener('click', saveEdit);

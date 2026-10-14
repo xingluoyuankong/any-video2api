@@ -72,6 +72,108 @@ def get_account(aid: str):
     return acc
 
 
+# ---- 在线登录（把渠道的 login_* 暴露成 HTTP，供控制台「导入账号」使用）----
+
+class LoginSmsSendBody(BaseModel):
+    channel: str
+    phone: str
+    area_code: str = "86"
+
+
+class LoginSmsBody(BaseModel):
+    channel: str
+    phone: str
+    code: str
+    area_code: str = "86"
+    name: str = ""
+    proxy: str = ""
+    note: str = ""
+
+
+class LoginPasswordBody(BaseModel):
+    channel: str
+    account: str
+    password: str
+    name: str = ""
+    proxy: str = ""
+    note: str = ""
+
+
+def _channel_or_404(name: str):
+    ch = registry.get(name)
+    if ch is None:
+        raise HTTPException(status_code=404, detail=f"渠道不存在：{name}")
+    return ch
+
+
+@router.get("/api/accounts/login/methods")
+def login_methods(channel: str = Query(...)):
+    """返回该渠道声明的在线登录方式。"""
+    ch = _channel_or_404(channel)
+    try:
+        methods = ch.login_methods()
+    except Exception:  # noqa: BLE001
+        methods = []
+    return {"channel": channel, "methods": methods}
+
+
+@router.post("/api/accounts/login/sms/send")
+def login_sms_send(body: LoginSmsSendBody):
+    ch = _channel_or_404(body.channel)
+    try:
+        return {"ok": True, "result": ch.login_send_sms(body.phone, body.area_code)}
+    except NotImplementedError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"发送验证码失败：{exc}")
+
+
+@router.post("/api/accounts/login/sms")
+def login_sms(body: LoginSmsBody):
+    ch = _channel_or_404(body.channel)
+    try:
+        secret = ch.login_by_sms(body.phone, body.code, body.area_code)
+    except NotImplementedError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"登录失败：{exc}")
+    if secret is None:
+        raise HTTPException(status_code=502, detail="登录失败：渠道未返回凭据")
+    return manager.add(body.channel, name=body.name or body.phone,
+                       cookies=secret.cookies, oauth=secret.oauth,
+                       browser_state=secret.browser_state, extra=secret.extra,
+                       proxy=body.proxy or None, note=body.note)
+
+
+@router.post("/api/accounts/login/password")
+def login_password(body: LoginPasswordBody):
+    ch = _channel_or_404(body.channel)
+    try:
+        secret = ch.login_by_password(body.account, body.password)
+    except NotImplementedError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"登录失败：{exc}")
+    if secret is None:
+        raise HTTPException(status_code=502, detail="登录失败：渠道未返回凭据")
+    return manager.add(body.channel, name=body.name or body.account,
+                       cookies=secret.cookies, oauth=secret.oauth,
+                       browser_state=secret.browser_state, extra=secret.extra,
+                       proxy=body.proxy or None, note=body.note)
+
+
+@router.get("/api/accounts/login/oauth")
+def login_oauth(channel: str = Query(...)):
+    """返回授权链接 / 书签脚本（不启动浏览器）。"""
+    ch = _channel_or_404(channel)
+    try:
+        return ch.login_oauth()
+    except NotImplementedError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"生成授权链接失败：{exc}")
+
+
 @router.post("/api/accounts/import")
 def import_account(body: AccountImport):
     if registry.get(body.channel) is None:

@@ -15,6 +15,14 @@ from src.core.config import config
 from src.channels.base import Channel, ChannelSpec
 
 
+def _safe_login_methods(ch) -> list:
+    """渠道可选的在线登录方式声明（sms / pwd / oauth），异常时返回空。"""
+    try:
+        return list(ch.login_methods())
+    except Exception:  # noqa: BLE001
+        return []
+
+
 class ChannelRegistry:
     def __init__(self):
         self._channels: Dict[str, Channel] = {}
@@ -75,7 +83,8 @@ class ChannelRegistry:
                 "kind": ch.spec.kind,
                 "base_url": ch.spec.base_url,
                 "transports": ch.spec.transports,
-                "capabilities": ch.capabilities(),
+                "capabilities": {**ch.capabilities(),
+                                 "login_methods": _safe_login_methods(ch)},
                 "model_count": len(ch.spec.models or {}),
             })
         for name, err in self._errors.items():

@@ -218,6 +218,27 @@ class Channel(abc.ABC):
                content_type: str = "application/octet-stream") -> AssetRef:
         raise NotImplementedError(f"{self.name} 不支持素材上传")
 
+    # ---- 在线登录（可选，默认不支持；实现后控制台「导入账号」会出现对应方式）----
+    def login_methods(self) -> List[str]:
+        """声明本渠道支持的在线登录方式：sms | pwd | oauth。"""
+        return []
+
+    def login_send_sms(self, phone: str, area_code: str = "86") -> Dict[str, Any]:
+        """发送登录短信验证码。"""
+        raise NotImplementedError(f"{self.name} 不支持短信登录")
+
+    def login_by_sms(self, phone: str, code: str, area_code: str = "86") -> Optional[AccountSecret]:
+        """手机号 + 验证码登录，返回凭据。"""
+        raise NotImplementedError(f"{self.name} 不支持短信登录")
+
+    def login_by_password(self, account: str, password: str) -> Optional[AccountSecret]:
+        """账密登录，返回凭据。"""
+        raise NotImplementedError(f"{self.name} 不支持账密登录")
+
+    def login_oauth(self) -> Dict[str, Any]:
+        """返回 {login_url, bookmarklet, hint}，供前端展示（不启动浏览器）。"""
+        raise NotImplementedError(f"{self.name} 不支持授权链接登录")
+
     # ---- 错误归一化（渠道覆写以识别自家错误码）--------------------------
     def classify_error(self, payload: Any) -> str:
         return "upstream"
