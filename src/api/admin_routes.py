@@ -9,6 +9,7 @@ from typing import Optional
 from fastapi import APIRouter, File, Form, HTTPException, Query, Request, UploadFile
 from pydantic import BaseModel
 
+from src.channels.base import GenerateRequest
 from src.channels.registry import registry
 from src.core.models import AccountImport, AccountPatch, KeyCreate
 from src.platform import audit
@@ -340,6 +341,43 @@ def check_all(channel: Optional[str] = Query(None)):
 def list_jobs(status: Optional[str] = Query(None), channel: Optional[str] = Query(None),
               limit: int = Query(100)):
     return {"jobs": store.list(status=status, channel=channel, limit=limit)}
+
+
+class JobCreateBody(BaseModel):
+    """控制台「工作台」提交任务。"""
+    channel: str
+    kind: str = "video"            # video | image | chat
+    model: str = ""
+    prompt: str = ""
+    mode: str = "t2v"
+    duration: int = 5
+    ratio: str = "16:9"
+    resolution: str = "720p"
+    size: str = ""
+    images: list[str] = []
+    params: dict = {}
+    account_mode: str = "auto"
+    account_id: Optional[str] = None
+
+
+@router.post("/api/jobs")
+def create_job(body: JobCreateBody):
+    """工作台提交生成任务（复用与 /v1/* 同一条 store.create 链路）。"""
+    ch = registry.get(body.channel)
+    if ch is None:
+        raise HTTPException(status_code=404, detail=f"渠道不存在：{body.channel}")
+    req = GenerateRequest(
+        channel=body.channel, kind=body.kind, model=body.model, prompt=body.prompt,
+        mode=body.mode, duration=body.duration, ratio=body.ratio,
+        resolution=body.resolution, size=body.size, images=list(body.images or []),
+        params=dict(body.params or {}), account_mode=body.account_mode,
+        account_id=body.account_id or None,
+    )
+    try:
+        job = store.create(body.channel, req, account_id=body.account_id or None)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"提交失败：{exc}")
+    return job
 
 
 @router.get("/api/jobs/{jid}")

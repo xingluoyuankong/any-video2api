@@ -21,7 +21,7 @@ from src.platform.accounts import manager as account_manager
 from src.platform.keys import PUBLIC_PATHS, keys
 from src.platform.media import MEDIA_DIR, BUCKETS, resolve_local
 from src.platform.jobs import worker
-from src.platform.session import KeepaliveScheduler
+from src.platform.session import KeepaliveScheduler, keeper
 from src.platform.users import SESSION_COOKIE, users
 
 # 控制台登录相关公开路径（登录接口本身必须免鉴权）
@@ -33,19 +33,54 @@ def _keepalive_accounts() -> list:
     return [{"id": r["id"], "channel": r["channel"]} for r in account_manager.raws()]
 
 
+def _soft_fail(account_id: str) -> None:
+    """软失败：只累计连续失败，达阈值（默认 3）才降级为 invalid。
+
+    注意：本函数在 record_activity 之前调用，所以读到的 consecutive_failures 是「上一次」的值。
+    """
+    try:
+        st = keeper.health(account_id) or {}
+        fails = int(st.get("consecutive_failures") or 0) + 1
+        if fails >= config.session_relogin_threshold:
+            account_manager.mark(account_id, status="invalid")
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def _keepalive_verify(account_id: str) -> bool:
-    """心跳验证：调用渠道 verify，并回写账号状态（供 KeepaliveScheduler 注入）。"""
+    """心跳验证：调用渠道 verify，并按「错误类型」决定是否降级账号状态。
+
+    治本要点（原实现的问题：任何一次失败都直接 mark invalid）：
+      - 成功             -> status=active，重置连续失败
+      - 明确鉴权失败      -> status=invalid / expired（真正的凭证失效）
+      - 网络/限流/风控等  -> **不改状态**，只累计失败；连续达阈值才降级
+    """
     row = account_manager.raw(account_id)
     if not row:
         return False
     ch = registry.get(row["channel"])
     if ch is None:
         return False
-    res = ch.verify(account_manager.secret(account_id))
-    account_manager.mark(account_id, status=res.status)
+
+    try:
+        res = ch.verify(account_manager.secret(account_id))
+    except Exception:  # noqa: BLE001  网络异常等，不算凭证失效
+        _soft_fail(account_id)
+        return False
+
     if res.ok:
+        account_manager.mark(account_id, status="active")
         account_manager.release(account_id, True)   # 成功即重置连续失败
-    return res.ok
+        return True
+
+    # 只有明确的鉴权失败才立即降级
+    if res.status in ("invalid", "expired"):
+        account_manager.mark(account_id, status=res.status)
+        return False
+
+    # risk / unknown / 空 -> 临时问题，软失败处理
+    _soft_fail(account_id)
+    return False
 
 
 keepalive = KeepaliveScheduler(_keepalive_accounts, _keepalive_verify,

@@ -103,7 +103,20 @@ const CH_META = {
   tiktok: { label: 'TikTok', glyph: 'TT' },
   coze:   { label: '扣子', glyph: '扣' },
   doubao: { label: '豆包', glyph: '豆' },
+  hailuo: { label: '海螺', glyph: '海' },
+  kling:  { label: '可灵', glyph: '可' },
+  vidu:   { label: 'Vidu', glyph: 'V' },
 };
+/* 渠道专属色（key 与 CH_META 对应；未登记渠道走 other 灰） */
+const CH_COLOR = {
+  jimeng: '#5b7cfa', tiktok: '#25d3d3', coze: '#a06bff', doubao: '#4c8bf5',
+  hailuo: '#ff6b9d', kling: '#00c48c', vidu: '#ff9f43',
+};
+function chColor(name) { return CH_COLOR[name] || 'var(--ink-3)'; }
+function chGlyph(name) {
+  return (CH_META[name] && CH_META[name].glyph) ||
+    (name || '?').slice(0, 2).toUpperCase();
+}
 const CAP_LABELS = {
   video: '视频', image: '图片', upload: '上传', checkin: '签到',
   oauth: 'OAuth', credits: '额度', models: '模型', verify: '验证',
@@ -152,9 +165,10 @@ function chChip(name) {
 }
 
 /* ---------------------------------------------------------------- 全局状态 */
-const ROUTES = ['overview', 'accounts', 'proxies', 'jobs', 'keys', 'logs', 'usage', 'models', 'config'];
+const ROUTES = ['overview', 'studio', 'accounts', 'proxies', 'jobs', 'keys', 'logs', 'usage', 'models', 'config'];
 const TITLES = {
-  overview: ['概览', 'overview'], accounts: ['账号管理', 'accounts'],
+  overview: ['概览', 'overview'], studio: ['工作台', 'studio'],
+  accounts: ['账号管理', 'accounts'],
   proxies: ['代理出口', 'proxies'], jobs: ['任务', 'jobs'],
   keys: ['密钥', 'keys'], logs: ['日志', 'logs'],
   usage: ['用量统计', 'usage'], models: ['模型与档位', 'models'], config: ['配置', 'config'],
@@ -331,6 +345,7 @@ function navigate() {
 function renderRoute() {
   switch (state.route) {
     case 'overview': loadOverview(); break;
+    case 'studio': loadStudio(); break;
     case 'accounts': loadAccounts(); break;
     case 'proxies':  loadProxies(); break;
     case 'jobs':     loadJobs(); break;
@@ -478,6 +493,144 @@ function overviewHtml(health, summary, stats) {
 /* ============================================================================
  * 视图 2 · 账号管理
  * ========================================================================== */
+/* ==========================================================================
+ * 视图 1b · 工作台（模型测试与创作）
+ * ========================================================================== */
+async function loadStudio() {
+  const view = $('#body-studio');
+  if (!state.channels.length) {
+    const r = await safe(api('/api/channels'));
+    if (r.ok) { state.channels = r.data.channels || []; fillChannelSelects(); }
+  }
+  view.innerHTML = studioHtml();
+  bindStudio();
+  await studioLoadModels();
+  studioLoadAccounts();
+  studioLoadJobs();
+}
+
+function studioHtml() {
+  const chOpts = state.channels.filter(c => !c.error)
+    .map(c => '<option value="' + esc(c.name) + '">' + esc(c.display_name || c.name) + '</option>').join('');
+  return '' +
+    '<div class="section-title">工作台 · 模型测试与创作</div>' +
+    '<div class="card" style="padding:16px">' +
+      '<div class="inline" style="gap:12px;flex-wrap:wrap">' +
+        '<label class="field" style="flex:1;min-width:150px;margin:0"><span>渠道</span>' +
+          '<select id="stChannel">' + chOpts + '</select></label>' +
+        '<label class="field" style="flex:1;min-width:150px;margin:0"><span>模型</span>' +
+          '<select id="stModel"><option value="">加载中…</option></select></label>' +
+        '<label class="field" style="width:104px;margin:0"><span>类型</span>' +
+          '<select id="stKind"><option value="video">视频</option><option value="image">图片</option></select></label>' +
+      '</div>' +
+      '<label class="field"><span>提示词 (prompt)</span>' +
+        '<textarea id="stPrompt" rows="4" placeholder="描述你想要的画面…"></textarea></label>' +
+      '<div class="inline" style="gap:12px;flex-wrap:wrap">' +
+        '<label class="field" style="width:104px;margin:0"><span>时长(秒)</span>' +
+          '<input type="number" id="stDuration" value="5" min="1" max="60"></label>' +
+        '<label class="field" style="width:110px;margin:0"><span>比例</span>' +
+          '<select id="stRatio"><option>16:9</option><option>9:16</option><option>1:1</option><option>4:3</option><option>3:4</option></select></label>' +
+        '<label class="field" style="width:110px;margin:0"><span>分辨率</span>' +
+          '<select id="stRes"><option>720p</option><option>1080p</option><option>480p</option></select></label>' +
+        '<label class="field" style="flex:1;min-width:170px;margin:0"><span>账号（留空自动选择）</span>' +
+          '<select id="stAccount"><option value="">自动选择</option></select></label>' +
+      '</div>' +
+      '<div class="inline" style="gap:10px;margin-top:4px;align-items:center">' +
+        '<button class="btn primary" id="stSubmit">提交任务</button>' +
+        '<button class="btn ghost" id="stRefresh">刷新结果</button>' +
+        '<span class="muted" id="stHint" style="font-size:12px"></span>' +
+      '</div>' +
+    '</div>' +
+    '<div class="section-title">最近任务</div>' +
+    '<div id="stJobs"><div class="loading"><div class="spinner"></div>加载中…</div></div>';
+}
+
+function bindStudio() {
+  $('#stChannel').addEventListener('change', () => { studioLoadModels(); studioLoadAccounts(); });
+  $('#stKind').addEventListener('change', () => studioLoadModels());
+  $('#stSubmit').addEventListener('click', studioSubmit);
+  $('#stRefresh').addEventListener('click', studioLoadJobs);
+}
+
+async function studioLoadModels() {
+  const ch = $('#stChannel').value;
+  const kind = $('#stKind').value;
+  const sel = $('#stModel');
+  if (!ch) { sel.innerHTML = '<option value="">无渠道</option>'; return; }
+  sel.innerHTML = '<option value="">加载中…</option>';
+  const r = await safe(api('/api/models?channel=' + encodeURIComponent(ch)));
+  if (!r.ok) { sel.innerHTML = '<option value="">加载失败</option>'; return; }
+  const d = r.data || {};
+  let models = d.models || (d.by_channel && d.by_channel[ch]) || [];
+  if (kind) models = models.filter(m => !m.kind || m.kind === kind || kind === 'video');
+  if (!models.length) { sel.innerHTML = '<option value="">该渠道无模型</option>'; return; }
+  sel.innerHTML = models.map(m => {
+    const id = m.alias || m.id || m.upstream_id || '';
+    const label = (m.display_name || id) + (m.price ? ' · ' + m.price : '');
+    return '<option value="' + esc(id) + '">' + esc(label) + '</option>';
+  }).join('');
+}
+
+async function studioLoadAccounts() {
+  const ch = $('#stChannel').value;
+  const sel = $('#stAccount');
+  if (!sel) return;
+  const r = await safe(api('/api/accounts?channel=' + encodeURIComponent(ch)));
+  const list = (r.ok && r.data.accounts) ? r.data.accounts : [];
+  sel.innerHTML = '<option value="">自动选择</option>' + list.map(a =>
+    '<option value="' + esc(a.id) + '">' + esc(a.name || a.id) + ' · ' + esc(a.status || '') + '</option>').join('');
+}
+
+async function studioSubmit() {
+  const ch = $('#stChannel').value;
+  const model = $('#stModel').value;
+  const prompt = $('#stPrompt').value.trim();
+  if (!ch) { toast('请选择渠道', 'warn'); return; }
+  if (!prompt) { toast('请填写提示词', 'warn'); return; }
+  const btn = $('#stSubmit');
+  btn.disabled = true; btn.textContent = '提交中…';
+  const body = {
+    channel: ch, kind: $('#stKind').value, model: model, prompt: prompt,
+    duration: Number($('#stDuration').value) || 5,
+    ratio: $('#stRatio').value, resolution: $('#stRes').value,
+    account_id: $('#stAccount').value || null,
+  };
+  const r = await safe(api('/api/jobs', { method: 'POST', body }));
+  btn.disabled = false; btn.textContent = '提交任务';
+  if (r.ok) {
+    toast('已提交：' + (r.data.id || ''), 'ok');
+    $('#stHint').textContent = '任务 ' + (r.data.id || '') + ' 已入队，正在轮询…';
+    studioLoadJobs();
+  } else {
+    toast('提交失败：' + r.error, 'bad');
+  }
+}
+
+async function studioLoadJobs() {
+  const box = $('#stJobs');
+  if (!box) return;
+  const r = await safe(api('/api/jobs?limit=20'));
+  if (!r.ok) { box.innerHTML = errorHtml(r.error); return; }
+  const jobs = (r.data && r.data.jobs) || [];
+  if (!jobs.length) { box.innerHTML = emptyHtml('暂无任务', '在上方提交一个试试'); return; }
+  const rows = jobs.map(j => {
+    const st = j.status || '';
+    const cls = /success|done/.test(st) ? 'ok' : /fail|error/.test(st) ? 'bad' : 'warn';
+    const url = j.result_url || j.video_url || j.url || '';
+    return '<tr>' +
+      '<td><span class="cell-main">' + esc(j.id || '') + '</span></td>' +
+      '<td>' + esc(j.channel || '') + '</td>' +
+      '<td>' + esc(j.model || '') + '</td>' +
+      '<td><span class="badge ' + cls + '">' + esc(st) + '</span></td>' +
+      '<td>' + (url ? '<a href="' + esc(url) + '" target="_blank" rel="noopener">打开</a>' : '<span class="muted">—</span>') + '</td>' +
+      '<td class="muted" style="font-size:12px">' + esc(fmtTime(j.created_at)) + '</td>' +
+      '</tr>';
+  }).join('');
+  box.innerHTML = '<div class="table-wrap"><div class="table-scroll"><table class="acc">' +
+    '<thead><tr><th>任务 ID</th><th>渠道</th><th>模型</th><th>状态</th><th>结果</th><th>创建时间</th></tr></thead>' +
+    '<tbody>' + rows + '</tbody></table></div></div>';
+}
+
 async function loadAccounts() {
   const box = $('#body-accounts');
   const tabs = $('#acctTabs');

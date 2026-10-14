@@ -87,7 +87,11 @@ class TiktokChannel(Channel):
             ok = str(r.get("code", "0")) in ("0", "") if isinstance(r, dict) else False
             return VerifyResult(ok=ok, status="active" if ok else "invalid", raw=redact(r))
         except UpstreamError as e:
-            return VerifyResult(ok=False, status="invalid", message=str(e))
+            s = str(e)
+            # 只有明确鉴权失败才算凭证失效；网络/限流/风控算临时错误（risk，不降级）
+            if "401" in s or "未登录" in s or "not logged" in s.lower():
+                return VerifyResult(ok=False, status="invalid", message=s)
+            return VerifyResult(ok=False, status="risk", message=s)
 
     def list_models(self, secret: AccountSecret) -> List[ModelSpec]:
         out = []

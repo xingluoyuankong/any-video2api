@@ -198,6 +198,11 @@ label.field > span { display:block; font-size:12px; color:var(--ink-2); margin-b
 .chip.ch-jimeng .cdot { background:#5b7cfa; }
 .chip.ch-tiktok .cdot { background:#25d3d3; }
 .chip.ch-coze   .cdot { background:#a06bff; }
+.chip.ch-doubao .cdot { background:#4c8bf5; }
+.chip.ch-hailuo .cdot { background:#ff6b9d; }
+.chip.ch-kling  .cdot { background:#00c48c; }
+.chip.ch-vidu   .cdot { background:#ff9f43; }
+.chip.ch-other  .cdot { background:var(--ink-3); }
 .chip.off { opacity:.45; }
 
 /* ---------- 表格 .acc ---------- */
@@ -236,7 +241,10 @@ table.acc td.mark.idle { border-left-color:var(--ink-3); }
 .group-head b { font-weight:600; }
 .group-head .g-meta { font-size:12px; color:var(--ink-3); }
 .ch-dot { width:9px; height:9px; border-radius:50%; background:var(--accent); }
-.ch-dot.ch-jimeng { background:#5b7cfa; } .ch-dot.ch-tiktok { background:#25d3d3; } .ch-dot.ch-coze { background:#a06bff; }
+.ch-dot.ch-jimeng { background:#5b7cfa; } .ch-dot.ch-tiktok { background:#25d3d3; }
+.ch-dot.ch-coze { background:#a06bff; } .ch-dot.ch-doubao { background:#4c8bf5; }
+.ch-dot.ch-hailuo { background:#ff6b9d; } .ch-dot.ch-kling { background:#00c48c; }
+.ch-dot.ch-vidu { background:#ff9f43; } .ch-dot.ch-other { background:var(--ink-3); }
 
 /* ---------- 订阅池 ---------- */
 .pool-card { display:flex; flex-direction:column; gap:12px; }
