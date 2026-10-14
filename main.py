@@ -69,7 +69,8 @@ def _keepalive_verify(account_id: str) -> bool:
         return False
 
     if res.ok:
-        account_manager.mark(account_id, status="active")
+        account_manager.mark(account_id, status="active",
+                             account_type=res.account_type or None)
         account_manager.release(account_id, True)   # 成功即重置连续失败
         return True
 

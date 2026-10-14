@@ -189,46 +189,64 @@ def _first_account(name: str) -> Optional[str]:
     return rows[0]["id"] if rows else None
 
 
-def _spec_rows(ch) -> List[dict]:
-    """由描述符 spec.models（别名 -> 上游 ID）生成统一行。"""
+def _spec_rows(ch, available: bool = False) -> List[dict]:
+    """由描述符 spec.models（别名 -> 上游 ID）生成统一行。
+
+    available：渠道是否有可用账号（无凭据 = 不可用）。
+    price：渠道 config extra.model_prices[alias] 若配置了则下发。
+    """
+    prices = (ch.spec.extra or {}).get("model_prices") or {}
     out = []
     for alias, upstream in (ch.spec.models or {}).items():
         out.append({"channel": ch.spec.name, "id": str(alias), "alias": str(alias),
                     "display_name": str(alias), "kind": ch.spec.kind,
-                    "upstream_id": str(upstream)})
+                    "upstream_id": str(upstream),
+                    "available": bool(available),
+                    "price": str(prices.get(alias, ""))})
     return out
 
 
-def _live_rows(ch, aid: str) -> List[dict]:
+def _live_rows(ch, aid: str, available: bool = True) -> List[dict]:
     """由账号实时 list_models() 生成统一行。"""
+    prices = (ch.spec.extra or {}).get("model_prices") or {}
     out = []
     for m in ch.list_models(manager.secret(aid)):
         out.append({"channel": ch.spec.name, "id": m.id, "alias": m.alias or m.id,
                     "display_name": m.display_name or m.id, "kind": m.kind,
-                    "upstream_id": (ch.spec.models or {}).get(m.id, m.id)})
+                    "upstream_id": (ch.spec.models or {}).get(m.id, m.id),
+                    "available": bool(available),
+                    "price": str(prices.get(m.alias or m.id, ""))})
     return out
 
 
 @router.get("/api/models")
 def list_models(live: bool = Query(True)):
-    """聚合全部渠道模型：描述符静态映射 + （有账号时）实时目录。"""
+    """聚合全部渠道模型：描述符静态映射 + （有账号时）实时目录。
+
+    每行带 available（渠道是否有可用账号）与 price（如配置了 model_prices）。
+    """
     models: List[dict] = []
     by_channel: Dict[str, int] = {}
+    available_map: Dict[str, bool] = {}
     for name in registry.names():
         ch = registry.get(name)
         if ch is None:
             continue
-        rows = _spec_rows(ch)
-        if live:
+        # 渠道有 load 错误或没有 active 账号 -> 不可用
+        has_account = bool(_first_account(name))
+        available = has_account
+        available_map[name] = available
+        rows = _spec_rows(ch, available=available)
+        if live and has_account:
             aid = _first_account(name)
             if aid:
                 try:
-                    rows += _live_rows(ch, aid)
+                    rows += _live_rows(ch, aid, available=available)
                 except Exception:
                     pass
         by_channel[name] = len(rows)
         models += rows
-    return {"models": models, "by_channel": by_channel}
+    return {"models": models, "by_channel": by_channel, "available_map": available_map}
 
 
 @router.get("/api/models/{channel}")

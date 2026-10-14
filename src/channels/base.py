@@ -21,6 +21,8 @@
 from __future__ import annotations
 
 import abc
+import json
+import re
 import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
@@ -72,9 +74,25 @@ class AccountSecret:
 @dataclass
 class VerifyResult:
     ok: bool
-    status: str = "unknown"        # active | invalid | expired | risk
+    status: str = "unknown"        # active | invalid | expired | risk | unknown
     message: str = ""
+    account_type: str = ""         # free | vip | member | ""（按上游原文判定）
     raw: Dict[str, Any] = field(default_factory=dict)
+
+
+def sniff_account_type(raw: Any) -> str:
+    """从上游原始返回里按常见字段关键词推断账号类型（free / vip / member）。"""
+    try:
+        s = json.dumps(raw, ensure_ascii=False).lower()
+    except Exception:  # noqa: BLE001
+        return ""
+    if re.search(r'"(is_vip|isvip|vip_status|vip_flag)"\s*:\s*(true|1)', s):
+        return "vip"
+    if re.search(r'"(plan|tier|level|member_type|subscription)"\s*:\s*"(pro|plus|vip|premium|member|paid)"', s):
+        return "member"
+    if re.search(r'"(is_free|free_user|trial)"\s*:\s*(true|1)', s) or re.search(r'"plan"\s*:\s*"free"', s):
+        return "free"
+    return ""
 
 
 @dataclass

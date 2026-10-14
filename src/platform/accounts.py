@@ -260,9 +260,12 @@ class AccountManager:
                            "error_count=error_count+1,last_checked_at=?,cooldown_until=? WHERE id=?",
                            (status, streak, now(), until, aid), True)
 
-    def mark(self, aid: str, status: Optional[str] = None, error: bool = False) -> None:
+    def mark(self, aid: str, status: Optional[str] = None, error: bool = False,
+             account_type: Optional[str] = None) -> None:
         if status:
             db.execute("UPDATE accounts SET status=?,last_checked_at=? WHERE id=?", (status, now(), aid), True)
+        if account_type:
+            db.execute("UPDATE accounts SET account_type=? WHERE id=?", (account_type, aid), True)
         if error:
             db.execute("UPDATE accounts SET error_count=error_count+1 WHERE id=?", (aid,), True)
 

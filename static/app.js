@@ -739,12 +739,17 @@ function accountTable(list) {
     }
 
     const proxy = a.proxy || '';
+    const at = (a.account_type || '').toLowerCase();
+    const atLabel = at === 'vip' ? '会员' : at === 'member' ? '会员' : at === 'free' ? 'Free'
+      : at ? at : '—';
+    const atCls = at === 'vip' || at === 'member' ? 'ok' : at === 'free' ? 'warn' : 'idle';
     return '<tr data-id="' + esc(a.id) + '">' +
       '<td class="mark ' + markCls(a.status) + '"></td>' +
       '<td><div class="cell-main">' + esc(a.name || a.id) + '</div>' +
         '<div class="cell-sub">' + esc(a.id) + '</div></td>' +
       '<td>' + chChip(a.channel) + '</td>' +
       '<td>' + badge(a.status) + (a.cooling ? ' ' + badge('cooling', '冷却中') : '') + '</td>' +
+      '<td><span class="badge ' + atCls + '">' + esc(atLabel) + '</span></td>' +
       '<td class="nowrap">' + creditCell + '</td>' +
       '<td title="' + esc(sessTitle) + '">' + sessCell + '</td>' +
       '<td class="nowrap">' + sfCell + '</td>' +
@@ -760,7 +765,7 @@ function accountTable(list) {
   }).join('');
 
   return '<div class="table-scroll"><table class="acc"><thead><tr>' +
-    '<th class="mark"></th><th>账号</th><th>渠道</th><th>状态</th><th>额度</th>' +
+    '<th class="mark"></th><th>账号</th><th>渠道</th><th>状态</th><th>类型</th><th>额度</th>' +
     '<th>会话健康</th><th>成功/失败</th><th>出口 IP</th><th>代理</th><th class="row-actions">操作</th>' +
     '</tr></thead><tbody>' + rows + '</tbody></table></div>';
 }
@@ -1719,12 +1724,15 @@ function modelCard(m, specMap) {
   const dur = spec.durations || [];
   const tags = [];
   const kind = m.kind || spec.kind;
+  const avail = m.available !== false;
+  tags.push('<span class="spec-tag ' + (avail ? 'k' : 'i2v') + '">' + (avail ? '可用' : '不可用') + '</span>');
+  if (m.price) tags.push('<span class="spec-tag">' + esc(m.price) + '</span>');
   if (kind) tags.push('<span class="spec-tag k">' + esc(kind) + '</span>');
   if (spec.supports_image_input) tags.push('<span class="spec-tag i2v">图生视频</span>');
   if (res.length) tags.push('<span class="spec-tag">' + esc(res.join(' / ')) + '</span>');
   if (dur.length) tags.push('<span class="spec-tag">' + esc(dur.map(d => d + 's').join(' / ')) + '</span>');
   if (!tags.length) tags.push('<span class="spec-tag">无规格声明</span>');
-  return '<div class="model-card">' +
+  return '<div class="model-card"' + (avail ? '' : ' style="opacity:.5"') + '>' +
     '<div class="m-alias">' + esc(m.display_name || alias) + '</div>' +
     '<div class="m-up">' + esc(alias) + (up && up !== alias ? ' → ' + esc(up) : '') + '</div>' +
     '<div class="m-tags">' + tags.join('') + '</div></div>';

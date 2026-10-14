@@ -85,7 +85,8 @@ class TiktokChannel(Channel):
         try:
             r = self._call(secret, "verify", {"permission": ["CREATE"]})
             ok = str(r.get("code", "0")) in ("0", "") if isinstance(r, dict) else False
-            return VerifyResult(ok=ok, status="active" if ok else "invalid", raw=redact(r))
+            return VerifyResult(ok=ok, status="active" if ok else "invalid",
+                                account_type=sniff_account_type(r) if ok else "", raw=redact(r))
         except UpstreamError as e:
             s = str(e)
             # 只有明确鉴权失败才算凭证失效；网络/限流/风控算临时错误（risk，不降级）

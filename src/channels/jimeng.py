@@ -102,6 +102,7 @@ class JimengChannel(Channel):
             r = self._call(secret, "health", None, params={"account_sdk_source": "web"})
             ok = str(r.get("ret", "0")) in ("0", "200", "") if isinstance(r, dict) else False
             return VerifyResult(ok=ok, status="active" if ok else "invalid",
+                                account_type=sniff_account_type(r) if ok else "",
                                 message="" if ok else str(r)[:200], raw=redact(r))
         except UpstreamError as e:
             s = str(e)
