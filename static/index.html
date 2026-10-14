@@ -1,0 +1,403 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>any-video2api 控制台</title>
+<script>try{var t=localStorage.getItem('u2a.theme')||'dark';document.documentElement.setAttribute('data-theme',t);}catch(e){}</script>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div class="shell">
+
+  <!-- ================= 侧栏 ================= -->
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="logo">u2</div>
+      <div>
+        <div class="title">any-video2api</div>
+        <div class="sub">console v1</div>
+      </div>
+    </div>
+    <nav class="nav" id="nav">
+      <a href="#overview" data-nav="overview"><span class="ico">◎</span><span>概览</span></a>
+      <a href="#accounts" data-nav="accounts"><span class="ico">☰</span><span>账号管理</span><span class="count" id="nav-accounts-count"></span></a>
+      <a href="#proxies"  data-nav="proxies"><span class="ico">⇄</span><span>代理出口</span></a>
+      <a href="#jobs"     data-nav="jobs"><span class="ico">◷</span><span>任务</span><span class="count" id="nav-jobs-count"></span></a>
+      <a href="#keys"     data-nav="keys"><span class="ico">⚿</span><span>密钥</span></a>
+      <a href="#logs"     data-nav="logs"><span class="ico">≣</span><span>日志</span></a>
+      <a href="#usage"    data-nav="usage"><span class="ico">▦</span><span>用量统计</span></a>
+      <a href="#models"   data-nav="models"><span class="ico">◈</span><span>模型与档位</span></a>
+      <a href="#config"   data-nav="config"><span class="ico">⚙</span><span>配置</span></a>
+    </nav>
+    <div class="foot">FastAPI · 反代平台</div>
+  </aside>
+
+  <!-- ================= 主区 ================= -->
+  <div class="main">
+    <header class="topbar">
+      <h2 id="pageTitle">概览</h2>
+      <span class="crumbs" id="pageCrumbs"></span>
+      <span class="sp"></span>
+      <span class="conn" id="conn"><span class="dot"></span><span id="connText">未连接</span></span>
+      <button class="btn ghost icon" id="refreshBtn" title="刷新当前页">⟳</button>
+      <button class="btn ghost icon" id="themeBtn" title="切换明暗主题">◐</button>
+      <button class="btn" id="keyBtn">密钥</button>
+    </header>
+
+    <div class="content">
+
+      <!-- ---------- 1. 概览 ---------- -->
+      <section class="view" id="view-overview" data-view="overview">
+        <div id="body-overview"></div>
+      </section>
+
+      <!-- ---------- 2. 账号管理 ---------- -->
+      <section class="view" id="view-accounts" data-view="accounts">
+        <div class="toolbar">
+          <span class="label">渠道</span>
+          <select id="acctChannel" style="width:170px"><option value="">全部渠道</option></select>
+          <button class="btn" id="acctCheckAll">全部检查</button>
+          <button class="btn" id="acctCheckinAll">全部签到</button>
+          <button class="btn" id="acctKeepaliveAll">全部保活</button>
+          <button class="btn" id="acctBalanceAll">全部刷新额度</button>
+          <span class="sp"></span>
+          <button class="btn ghost" id="acctRefresh">刷新</button>
+          <button class="btn primary" id="acctImport">导入账号</button>
+        </div>
+        <div id="body-accounts"></div>
+      </section>
+
+      <!-- ---------- 3. 代理出口 ---------- -->
+      <section class="view" id="view-proxies" data-view="proxies">
+        <div id="pxStats"></div>
+        <div class="toolbar">
+          <span class="label">渠道</span>
+          <select id="pxChannelFilter" style="width:170px"><option value="">全部渠道</option></select>
+          <button class="btn" id="pxCheckAll">全部校验</button>
+          <span class="sp"></span>
+          <button class="btn ghost" id="pxRefresh">刷新</button>
+          <button class="btn primary" id="pxBulk">批量导入</button>
+        </div>
+        <div id="body-proxies"></div>
+        <div class="section-title">订阅池</div>
+        <div id="body-pools"></div>
+      </section>
+
+      <!-- ---------- 4. 任务 ---------- -->
+      <section class="view" id="view-jobs" data-view="jobs">
+        <div class="toolbar">
+          <span class="label">状态</span>
+          <select id="jobStatus" style="width:150px">
+            <option value="">全部状态</option>
+            <option value="queued">排队</option>
+            <option value="submitted">已提交</option>
+            <option value="processing">处理中</option>
+            <option value="success">成功</option>
+            <option value="failed">失败</option>
+            <option value="cancelled">已取消</option>
+          </select>
+          <span class="label">渠道</span>
+          <select id="jobChannel" style="width:170px"><option value="">全部渠道</option></select>
+          <span class="sp"></span>
+          <button class="btn ghost" id="jobsRefresh">刷新</button>
+        </div>
+        <div id="body-jobs"></div>
+      </section>
+
+      <!-- ---------- 5. 密钥 ---------- -->
+      <section class="view" id="view-keys" data-view="keys">
+        <div class="toolbar">
+          <span class="muted" style="font-size:12.5px">API Key 用于外部调用 <code class="mono">/v1/*</code> 接口</span>
+          <span class="sp"></span>
+          <button class="btn ghost" id="keysRefresh">刷新</button>
+          <button class="btn primary" id="keyNew">新建密钥</button>
+        </div>
+        <div id="body-keys"></div>
+      </section>
+
+      <!-- ---------- 6. 日志 ---------- -->
+      <section class="view" id="view-logs" data-view="logs">
+        <div id="logStats"></div>
+        <div class="toolbar">
+          <div class="chips" id="logChips">
+            <button class="chip-btn active" data-log-tab="all">全部</button>
+            <button class="chip-btn" data-log-tab="jobs">任务</button>
+            <button class="chip-btn" data-log-tab="chat">对话</button>
+            <button class="chip-btn" data-log-tab="system">系统</button>
+          </div>
+          <span class="label">渠道</span>
+          <select id="logChannel" style="width:170px"><option value="">全部渠道</option></select>
+          <span class="label">条数</span>
+          <select id="logLimit" style="width:110px">
+            <option value="100">100</option>
+            <option value="200" selected>200</option>
+            <option value="500">500</option>
+          </select>
+          <span class="sp"></span>
+          <button class="btn ghost" id="logsRefresh">刷新</button>
+        </div>
+        <div id="body-logs"></div>
+      </section>
+
+      <!-- ---------- 7. 用量统计 ---------- -->
+      <section class="view" id="view-usage" data-view="usage">
+        <div id="usageStats"></div>
+        <div class="toolbar">
+          <span class="label">窗口</span>
+          <select id="usageDays" style="width:110px">
+            <option value="7" selected>7 天</option>
+            <option value="14">14 天</option>
+            <option value="30">30 天</option>
+          </select>
+          <span class="label">渠道</span>
+          <select id="usageChannel" style="width:170px"><option value="">全部渠道</option></select>
+          <span class="sp"></span>
+          <button class="btn ghost" id="usageRefresh">刷新</button>
+        </div>
+        <div id="body-usage"></div>
+      </section>
+
+      <!-- ---------- 8. 模型与档位 ---------- -->
+      <section class="view" id="view-models" data-view="models">
+        <div class="toolbar">
+          <input type="text" id="modelSearch" placeholder="搜索模型 / 别名 / 上游 ID" style="width:250px">
+          <span class="sp"></span>
+          <button class="btn ghost" id="modelReload">刷新目录</button>
+          <span class="label">渠道</span>
+          <select id="modelProbeChannel" style="width:160px"><option value="">选择渠道</option></select>
+          <button class="btn" id="modelProbe">探测实时目录</button>
+          <button class="btn ghost" id="modelsRefresh">刷新</button>
+        </div>
+        <div id="body-models"></div>
+      </section>
+
+      <!-- ---------- 9. 配置 ---------- -->
+      <section class="view" id="view-config" data-view="config">
+        <div class="toolbar">
+          <span class="muted" style="font-size:12.5px">编辑运行时配置（<code class="mono">setting.toml</code>）与渠道描述符</span>
+          <span class="sp"></span>
+          <button class="btn ghost" id="configReload">重新加载</button>
+          <button class="btn primary" id="configSave">保存配置</button>
+        </div>
+        <div id="body-config"></div>
+      </section>
+
+    </div>
+  </div>
+</div>
+
+<!-- ================= 弹窗 ================= -->
+
+<!-- 密钥 -->
+<div class="modal" id="m-key" hidden>
+  <div class="modal-card">
+    <div class="modal-head"><h3>API 密钥</h3><button class="x" data-close="m-key">×</button></div>
+    <div class="modal-body">
+      <p class="hint" id="keyHint" style="margin-top:0;margin-bottom:12px">请输入控制台 API Key（<code class="mono">u2a_...</code>）。</p>
+      <label class="field"><span>API Key</span>
+        <input type="password" id="keyInput" placeholder="u2a_xxxxxxxx_yyyyyyyy" autocomplete="off">
+      </label>
+      <div class="hint">仅保存在本机 localStorage，请求通过 <code class="mono">X-API-Key</code> 头发送。</div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn ghost" data-close="m-key">取消</button>
+      <button class="btn primary" id="keySave">保存并连接</button>
+    </div>
+  </div>
+</div>
+
+<!-- 导入账号 -->
+<div class="modal" id="m-import" hidden>
+  <div class="modal-card wide">
+    <div class="modal-head"><h3>导入账号</h3><button class="x" data-close="m-import">×</button></div>
+    <div class="modal-body">
+      <div class="inline" style="gap:12px;margin-bottom:14px">
+        <label class="field" style="flex:1;margin:0"><span>渠道</span><select id="impChannel"></select></label>
+        <label class="field" style="flex:1;margin:0"><span>账号名称</span><input type="text" id="impName" placeholder="可留空，默认用账号 ID"></label>
+      </div>
+      <div class="tabs" id="impTabs">
+        <button data-imp-tab="paste" class="active">粘贴 Cookie</button>
+        <button data-imp-tab="file">上传文件</button>
+      </div>
+      <div id="impPane-paste">
+        <label class="field"><span>Cookie（JSON）</span>
+          <textarea id="impCookies" placeholder='支持三种格式：Cookie-Editor 数组 [{"name":"a","value":"b"}]、{"cookies":[...]}、或扁平 {"a":"b"}'></textarea>
+        </label>
+      </div>
+      <div id="impPane-file" class="hidden">
+        <label class="field"><span>Cookie 文件（.json）</span>
+          <input type="file" id="impFile" accept=".json,application/json">
+        </label>
+      </div>
+      <div class="inline" style="gap:12px">
+        <label class="field" style="flex:1;margin:0"><span>代理（可选）</span><input type="text" id="impProxy" placeholder="http://user:pass@host:port"></label>
+        <label class="field" style="flex:1;margin:0"><span>备注（可选）</span><input type="text" id="impNote" placeholder="备注"></label>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn ghost" data-close="m-import">取消</button>
+      <button class="btn primary" id="impSubmit">导入</button>
+    </div>
+  </div>
+</div>
+
+<!-- 编辑账号 -->
+<div class="modal" id="m-edit" hidden>
+  <div class="modal-card">
+    <div class="modal-head"><h3>编辑账号</h3><button class="x" data-close="m-edit">×</button></div>
+    <div class="modal-body">
+      <input type="hidden" id="editId">
+      <label class="field"><span>名称</span><input type="text" id="editName"></label>
+      <label class="field"><span>状态</span>
+        <select id="editStatus">
+          <option value="">（不修改）</option>
+          <option value="active">active · 活跃</option>
+          <option value="unknown">unknown · 未验证</option>
+          <option value="invalid">invalid · 失效</option>
+          <option value="expired">expired · 已过期</option>
+          <option value="risk">risk · 风控</option>
+          <option value="cooldown">cooldown · 冷却</option>
+        </select>
+      </label>
+      <label class="field"><span>代理</span><input type="text" id="editProxy" placeholder="留空则不修改"></label>
+      <label class="field"><span>备注</span><input type="text" id="editNote" placeholder="留空则不修改"></label>
+      <div class="hint" id="editMeta"></div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn ghost" data-close="m-edit">取消</button>
+      <button class="btn primary" id="editSave">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- 备份 / 恢复 -->
+<div class="modal" id="m-backups" hidden>
+  <div class="modal-card wide">
+    <div class="modal-head"><h3>凭据备份</h3><button class="x" data-close="m-backups">×</button></div>
+    <div class="modal-body">
+      <input type="hidden" id="bkAccountId">
+      <div class="inline" style="margin-bottom:14px">
+        <input type="text" id="bkTag" placeholder="备份标签（如 manual）" style="flex:1">
+        <button class="btn" id="bkCreate">新建备份</button>
+      </div>
+      <div id="bkList"></div>
+    </div>
+    <div class="modal-foot"><button class="btn ghost" data-close="m-backups">关闭</button></div>
+  </div>
+</div>
+
+<!-- 代理配置 -->
+<div class="modal" id="m-proxy" hidden>
+  <div class="modal-card">
+    <div class="modal-head"><h3>配置代理出口</h3><button class="x" data-close="m-proxy">×</button></div>
+    <div class="modal-body">
+      <input type="hidden" id="pxAccount"><input type="hidden" id="pxChannel">
+      <div class="hint" id="pxAccountLabel" style="margin-top:0;margin-bottom:12px"></div>
+      <label class="field"><span>代理链接</span><input type="text" id="pxProxy" placeholder="http://user:pass@host:port"></label>
+      <label class="field"><span>声明 IP（可选）</span><input type="text" id="pxExpected" placeholder="1.2.3.4"></label>
+      <div class="inline" style="gap:12px">
+        <label class="field" style="flex:1;margin:0"><span>标签</span><input type="text" id="pxLabel" placeholder="如 hk-01"></label>
+        <label class="field" style="flex:1;margin:0"><span>备注</span><input type="text" id="pxNote" placeholder="备注"></label>
+      </div>
+      <label class="check" style="margin-top:4px"><input type="checkbox" id="pxEnabled" checked> 启用该代理</label>
+    </div>
+    <div class="modal-foot">
+      <button class="btn danger" id="pxDirect">切直连</button>
+      <span class="sp"></span>
+      <button class="btn ghost" data-close="m-proxy">取消</button>
+      <button class="btn primary" id="pxSave">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- 批量导入代理 -->
+<div class="modal" id="m-proxy-bulk" hidden>
+  <div class="modal-card wide">
+    <div class="modal-head"><h3>批量导入代理</h3><button class="x" data-close="m-proxy-bulk">×</button></div>
+    <div class="modal-body">
+      <label class="field"><span>每行一条：账号ID 代理链接 [声明IP] [备注]</span>
+        <textarea id="bulkText" rows="9" placeholder="acc_1a2b3c4d5e6f http://user:pass@1.2.3.4:8080 1.2.3.4 hk-01
+acc_9f8e7d6c5b4a socks5://user:pass@5.6.7.8:1080"></textarea>
+      </label>
+      <div class="hint">分隔符支持空格或制表符；后两段可选。</div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn ghost" data-close="m-proxy-bulk">取消</button>
+      <button class="btn primary" id="bulkSubmit">导入</button>
+    </div>
+  </div>
+</div>
+
+<!-- 保存订阅池 -->
+<div class="modal" id="m-pool-save" hidden>
+  <div class="modal-card wide">
+    <div class="modal-head"><h3>保存订阅池</h3><button class="x" data-close="m-pool-save">×</button></div>
+    <div class="modal-body">
+      <div class="inline" style="gap:12px;margin-bottom:14px">
+        <label class="field" style="flex:1;margin:0"><span>Realm</span>
+          <select id="poolRealm"><option value="global">global</option><option value="cn">cn</option></select>
+        </label>
+        <label class="field" style="flex:1;margin:0"><span>写入方式</span>
+          <select id="poolMode"><option value="replace">replace · 覆盖</option><option value="append">append · 追加</option></select>
+        </label>
+      </div>
+      <label class="field"><span>订阅链接（每行一条）</span>
+        <textarea id="poolSubs" rows="8" placeholder="https://example.com/sub?token=xxx"></textarea>
+      </label>
+    </div>
+    <div class="modal-foot">
+      <button class="btn ghost" data-close="m-pool-save">取消</button>
+      <button class="btn primary" id="poolSave">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- 新建密钥 -->
+<div class="modal" id="m-key-create" hidden>
+  <div class="modal-card">
+    <div class="modal-head"><h3>新建 API 密钥</h3><button class="x" data-close="m-key-create">×</button></div>
+    <div class="modal-body">
+      <label class="field"><span>名称</span><input type="text" id="kcName" placeholder="client"></label>
+      <label class="field"><span>备注</span><input type="text" id="kcNote" placeholder="备注（可选）"></label>
+      <div class="inline" style="gap:12px">
+        <label class="field" style="flex:1;margin:0"><span>RPM 限制</span><input type="number" id="kcRpm" value="120" min="1"></label>
+        <label class="field" style="flex:1;margin:0"><span>最大并发</span><input type="number" id="kcMax" value="8" min="1"></label>
+      </div>
+      <label class="field"><span>允许渠道（逗号分隔，留空=全部）</span><input type="text" id="kcChannels" placeholder="jimeng,coze"></label>
+    </div>
+    <div class="modal-foot">
+      <button class="btn ghost" data-close="m-key-create">取消</button>
+      <button class="btn primary" id="kcSubmit">创建</button>
+    </div>
+  </div>
+</div>
+
+<!-- 查看明文密钥 -->
+<div class="modal" id="m-reveal" hidden>
+  <div class="modal-card">
+    <div class="modal-head"><h3>密钥明文</h3><button class="x" data-close="m-reveal">×</button></div>
+    <div class="modal-body">
+      <div class="reveal-box"><code id="revealVal"></code><button class="btn xs" id="revealCopy">复制</button></div>
+      <div class="hint">请妥善保存，勿泄露或写入代码仓库。</div>
+    </div>
+    <div class="modal-foot"><button class="btn ghost" data-close="m-reveal">关闭</button></div>
+  </div>
+</div>
+
+<!-- 通用确认 -->
+<div class="modal" id="m-confirm" hidden>
+  <div class="modal-card" style="max-width:420px">
+    <div class="modal-head"><h3>请确认</h3><button class="x" data-close="m-confirm">×</button></div>
+    <div class="modal-body"><p id="confirmMsg" style="margin:0;font-size:13.5px;line-height:1.7"></p></div>
+    <div class="modal-foot">
+      <button class="btn ghost" id="confirmNo">取消</button>
+      <button class="btn danger" id="confirmYes">确认</button>
+    </div>
+  </div>
+</div>
+
+<div class="toasts" id="toasts"></div>
+<script src="/static/app.js"></script>
+</body>
+</html>

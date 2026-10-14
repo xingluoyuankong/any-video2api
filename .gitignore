@@ -1,0 +1,35 @@
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+
+# ---- 运行时数据（不入库）----
+data/*
+!data/.gitkeep
+*.db
+*.db-shm
+*.db-wal
+*.log
+
+# ---- 本地凭据 / 密钥（严禁入库）----
+.env
+.env.*
+!/.env.example
+DEFAULT_API_KEY.txt
+.secret.key
+*_cookies*.json
+cookies*.json
+accounts*.jsonl
+*.pem
+*.key
+!config/**/*.json
+
+# ---- 编辑器 / 系统 ----
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+*.swp

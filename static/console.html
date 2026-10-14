@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>any-video2api 控制台</title>
+<style>
+  :root { --bg:#0f1420; --panel:#171e2e; --line:#243044; --fg:#dbe4f3; --dim:#7f8ea8; --accent:#4a90d9; --ok:#3ecf8e; --bad:#e05c5c; --warn:#e0b34a; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:13px/1.5 ui-monospace,Consolas,monospace; }
+  header { padding:14px 20px; border-bottom:1px solid var(--line); display:flex; gap:12px; align-items:center; }
+  header h1 { font-size:15px; margin:0; font-weight:600; }
+  header .sp { flex:1; }
+  input,button,select { background:var(--panel); color:var(--fg); border:1px solid var(--line); border-radius:6px; padding:6px 10px; font:inherit; }
+  button { cursor:pointer; } button:hover { border-color:var(--accent); }
+  main { padding:20px; display:grid; grid-template-columns:repeat(auto-fit,minmax(340px,1fr)); gap:16px; }
+  section { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:14px; }
+  section h2 { font-size:12px; text-transform:uppercase; letter-spacing:.08em; color:var(--dim); margin:0 0 10px; }
+  .row { display:flex; justify-content:space-between; gap:8px; padding:5px 0; border-bottom:1px dashed var(--line); }
+  .row:last-child { border-bottom:0; }
+  .tag { font-size:11px; padding:1px 7px; border-radius:99px; border:1px solid var(--line); color:var(--dim); }
+  .tag.on { color:var(--ok); border-color:var(--ok); } .tag.off { color:var(--dim); }
+  .st-success { color:var(--ok); } .st-failed { color:var(--bad); } .st-processing,.st-submitted,.st-queued { color:var(--warn); }
+  .muted { color:var(--dim); }
+  #status { color:var(--dim); }
+</style>
+</head>
+<body>
+<header>
+  <h1>any-video2api</h1>
+  <span class="tag" id="conn">未连接</span>
+  <span class="sp"></span>
+  <input id="key" type="password" placeholder="API Key (u2a_...)" size="34">
+  <button onclick="saveKey()">保存</button>
+  <button onclick="refreshAll()">刷新</button>
+</header>
+<main>
+  <section><h2>渠道 Channels</h2><div id="channels" class="muted">—</div></section>
+  <section><h2>账号 Accounts</h2><div id="accounts" class="muted">—</div></section>
+  <section><h2>任务 Jobs</h2><div id="jobs" class="muted">—</div></section>
+  <section><h2>汇总 Summary</h2><div id="summary" class="muted">—</div></section>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+function getKey(){ return localStorage.getItem('u2a_key') || $('key').value.trim(); }
+function saveKey(){ localStorage.setItem('u2a_key', $('key').value.trim()); refreshAll(); }
+async function api(path, opts={}){
+  const r = await fetch(path, { ...opts, headers: { 'X-API-Key': getKey(), 'Content-Type':'application/json', ...(opts.headers||{}) } });
+  if(!r.ok) throw new Error(r.status + ' ' + r.statusText);
+  return r.json();
+}
+function row(k, v){ return `<div class="row"><span>${k}</span><span>${v}</span></div>`; }
+async function refreshAll(){
+  try {
+    const [ch, acc, jobs, sum] = await Promise.all([
+      api('/api/channels'), api('/api/accounts'), api('/api/jobs?limit=20'), api('/api/summary')
+    ]);
+    $('conn').textContent = '已连接'; $('conn').className = 'tag on';
+    $('channels').innerHTML = ch.channels.map(c => {
+      const caps = Object.entries(c.capabilities||{}).filter(([k,v])=>v).map(([k])=>k).join(',');
+      return row(`<b>${c.name}</b> <span class="muted">${c.display_name||''}</span>`, `<span class="muted">${caps}</span>`);
+    }).join('') || '<span class="muted">无</span>';
+    $('accounts').innerHTML = (acc.accounts||[]).map(a =>
+      row(`${a.name} <span class="muted">${a.channel}</span>`, `<span class="tag">${a.status}</span>`)).join('') || '<span class="muted">无账号</span>';
+    $('jobs').innerHTML = (jobs.jobs||[]).map(j =>
+      row(`${j.id.slice(0,14)} <span class="muted">${j.channel}</span>`, `<span class="st-${j.status}">${j.status}</span>`)).join('') || '<span class="muted">无任务</span>';
+    $('summary').innerHTML = row('渠道数', (sum.channels||[]).length) + row('任务总数', sum.jobs_total)
+      + Object.entries(sum.jobs_by_status||{}).map(([k,v])=>row('· '+k, v)).join('');
+  } catch(e){
+    $('conn').textContent = '鉴权失败/未连接'; $('conn').className = 'tag off';
+    console.error(e);
+  }
+}
+$('key').value = localStorage.getItem('u2a_key') || '';
+if(getKey()) refreshAll();
+</script>
+</body>
+</html>

@@ -1,0 +1,52 @@
+{
+  "adapter": "src.channels.jimeng:JimengChannel",
+  "display_name": "即梦 (Jimeng)",
+  "kind": "mixed",
+  "base_url": "https://jimeng.jianying.com",
+  "proxy": "",
+  "timeout": 120,
+  "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+  "transports": ["requests", "playwright"],
+  "supports": {
+    "video": true,
+    "image": true,
+    "upload": true,
+    "checkin": true,
+    "oauth": true,
+    "credits": true,
+    "models": true,
+    "verify": true
+  },
+  "models": {
+    "jimeng-video-seedance-2.5": "dreamina_seedance_45_pro",
+    "jimeng-video-seedance-2.0": "dreamina_seedance_40_pro",
+    "jimeng-video-seedance-2.0-mini": "dreamina_seedance_40_mini",
+    "jimeng-video-seedance-2.0-fast": "dreamina_seedance_40_vision",
+    "jimeng-video-seedance-2.0-fast-basic": "dreamina_seedance_40",
+    "jimeng-video-seedance-2.0-pro": "dreamina_seedance_40_pro_vision",
+    "jimeng-video-seedance-1.5-pro": "dreamina_ic_generate_video_model_vgfm_3.5_pro",
+    "jimeng-video-3.0-pro": "dreamina_ic_generate_video_model_vgfm_3.0_pro",
+    "jimeng-video-3.0": "dreamina_ic_generate_video_model_vgfm_3.0",
+    "jimeng-video-3.0-fast": "dreamina_ic_generate_video_model_vgfm_3.0_fast",
+    "jimeng-video-minimax-h3": "dreamina_minimax_h3",
+    "jimeng-video-happyhorse-1.1": "dreamina_happyhorse_v1_1",
+    "jimeng-video-wan-3.0": "dreamina_wan_30",
+    "jimeng-5.0": "high_aes_general_v50",
+    "jimeng-4.5": "high_aes_general_v40l",
+    "jimeng-4.1": "high_aes_general_v41",
+    "jimeng-3.1": "high_aes_general_v30l_art_fangzhou:general_v3.0_18b"
+  },
+  "endpoints": {
+    "health":        {"method": "GET",  "path": "/passport/account/info/v2"},
+    "common_config": {"method": "POST", "path": "/mweb/v1/video_generate/get_common_config"},
+    "generate":      {"method": "POST", "path": "/mweb/v1/aigc_draft/generate"},
+    "poll":          {"method": "POST", "path": "/mweb/v1/get_history_by_ids"},
+    "credit":        {"method": "POST", "path": "/commerce/v1/benefits/user_credit"},
+    "credit_history":{"method": "POST", "path": "/commerce/v1/benefits/user_credit_history"},
+    "benefit_meta":  {"method": "POST", "path": "/commerce/v3/resource/benefit_metadata"},
+    "user_benefits": {"method": "POST", "path": "/commerce/v3/benefits/batch_get_user_benefit"},
+    "checkin":       {"method": "POST", "path": "/commerce/v1/benefits/credit_receive"},
+    "history":       {"method": "POST", "path": "/mweb/v1/get_user_local_item_list"},
+    "upload_token":  {"method": "POST", "path": "/mweb/v1/get_upload_token"}
+  }
+}

@@ -1,0 +1,74 @@
+# any-video2api 平台配置
+# 环境变量可覆盖：AV2A_CONFIG / AV2A_API_KEY / AV2A_CHANNELS_DIR（兼容旧前缀 UNIFIED_*）
+
+[server]
+host = "127.0.0.1"
+port = 8800
+public_base = "http://127.0.0.1:8800"
+
+[api]
+# 留空则只认数据库里的多密钥（首次启动自动生成一把）
+api_key = ""
+auth_disabled = false
+
+[channels]
+# enabled 缺省 = 加载 config/channels/ 下全部描述符
+# enabled = ["jimeng", "tiktok", "coze"]
+
+[storage]
+database = "data/unified.db"
+media_dir = "data/media"
+profile_dir = "data/profiles"
+max_media_bytes = 524288000
+media_chunk_bytes = 1048576
+max_upload_bytes = 52428800
+
+[job]
+poll_interval = 6
+max_poll_interval = 15
+video_timeout = 1800
+max_network_retries = 3
+
+[checkin]
+enabled = true
+timezone = "Asia/Shanghai"
+primary_time = "08:10"
+retry_time = "20:10"
+
+# ---------------- 防风控 ----------------
+[antiban]
+enabled = true
+# 每账号每 60 秒最多请求次数（滑动窗口）
+rpm_limit = 60
+# 同一账号两次请求最小间隔（秒）
+min_interval = 1.0
+# 间隔随机抖动上限（秒），模拟人类操作节奏
+jitter = 0.5
+# 连续风控/并发错误达到该值 -> 熔断该账号
+failure_threshold = 3
+# 熔断冷却时长（秒），到期转半开探测
+cooldown = 120
+# 代理池：账号按稳定哈希粘性绑定其中一个（一号一 IP）；留空则不绑定
+proxy_pool = []
+# 是否启用设备指纹固定（同账号永远同一套 UA/分辨率/时区）
+fingerprint = true
+
+# ---------------- 账号级代理（一账号一固定出口 IP）----------------
+[proxy]
+enabled = true
+# 出口 IP 探测超时（秒）
+probe_timeout = 15
+# 同一出口 IP 允许承载的账号数上限（0 = 不限制）；超限在面板标记
+max_per_ip = 3
+
+# ---------------- 会话保活（延长登录态）----------------
+[session]
+enabled = true
+# 心跳保活间隔（秒）；到点对有效账号发轻量验证请求维持活跃
+keepalive_interval = 1800
+# 距过期多少秒开始视为"即将过期"（触发刷新/告警）
+lead_time = 3600
+# 凭据快照保留份数（多凭据冗余，cookie 失效可回退）
+backup_keep = 5
+# 连续保活失败达到该值 -> 建议重新登录
+relogin_threshold = 3

@@ -1,0 +1,10 @@
+fastapi>=0.110
+uvicorn[standard]>=0.27
+pydantic>=2.5
+requests>=2.31
+httpx>=0.27
+python-multipart>=0.0.9
+# 可选：浏览器态渠道兜底
+# playwright>=1.40
+# Windows DPAPI 凭据加密
+# pywin32>=306

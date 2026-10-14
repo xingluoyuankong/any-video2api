@@ -1,0 +1,35 @@
+{
+  "adapter": "src.channels.coze:CozeChannel",
+  "display_name": "扣子 (Coze)",
+  "kind": "mixed",
+  "base_url": "https://www.coze.cn",
+  "proxy": "",
+  "timeout": 120,
+  "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+  "transports": ["requests"],
+  "supports": {
+    "video": true,
+    "image": false,
+    "upload": false,
+    "checkin": true,
+    "oauth": true,
+    "credits": true,
+    "models": true,
+    "verify": true
+  },
+  "models": {
+    "doubao-seedance-pro": "doubao-seedance-pro",
+    "doubao-seedance-1.5-pro": "doubao-seedance-1.5-pro"
+  },
+  "endpoints": {
+    "verify":        {"method": "GET",  "path": "https://www.coze.cn/space-intro/api/user-info"},
+    "oauth_authorize": {"method": "GET", "path": "https://www.coze.cn/api/permission/oauth2/authorize"},
+    "oauth_token":   {"method": "POST", "path": "https://api.coze.cn/api/permission/oauth2/token"},
+    "workflow_run":  {"method": "POST", "path": "/api/workflow/run"},
+    "workflow_web_run": {"method": "POST", "path": "/api/workflow_api/test_run"},
+    "workflow_poll": {"method": "GET",  "path": "/api/workflow_api/get_process"},
+    "models":        {"method": "POST", "path": "https://code.coze.cn/v1/api/project/model_list"},
+    "credits":       {"method": "GET",  "path": "https://code.coze.cn/api/marketplace/trade/credit/balance/check"},
+    "checkin":       {"method": "POST", "path": "/checkin"}
+  }
+}

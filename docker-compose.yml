@@ -1,0 +1,22 @@
+services:
+  any-video2api:
+    build: .
+    image: any-video2api:latest
+    container_name: any-video2api
+    restart: unless-stopped
+    ports:
+      - "8800:8800"
+    environment:
+      # 生产环境务必替换为强随机值
+      AV2A_API_KEY: "${AV2A_API_KEY:-}"
+      # 账号级代理出口探测等可选配置
+      AV2A_DEV_KEY: "${AV2A_DEV_KEY:-}"
+    volumes:
+      - ./data:/app/data
+      - ./config:/app/config
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8800/health',timeout=3).status==200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
