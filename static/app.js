@@ -160,7 +160,8 @@ const TITLES = {
 };
 
 const state = {
-  key: localStorage.getItem(LS_KEY) || '',
+  key: '',            // 已弃用：控制台改用账号密码会话（保留占位以兼容旧代码）
+  user: null,         // 当前登录用户 {username, role}
   theme: document.documentElement.getAttribute('data-theme') || 'dark',
   route: '',
   channels: [],
@@ -247,7 +248,6 @@ function resolveConfirm(v) {
 async function api(path, opts) {
   opts = opts || {};
   const headers = {};
-  if (state.key) headers['X-API-Key'] = state.key;
   let body;
   if (opts.form) {
     body = opts.form;
@@ -257,7 +257,7 @@ async function api(path, opts) {
   }
   let res;
   try {
-    res = await fetch(path, { method: opts.method || 'GET', headers, body });
+    res = await fetch(path, { method: opts.method || 'GET', headers, body, credentials: 'same-origin' });
   } catch (e) {
     setConn(false, '网络错误');
     const err = new Error('网络错误：' + e.message);
@@ -269,9 +269,9 @@ async function api(path, opts) {
   if (text) { try { data = JSON.parse(text); } catch (_) { data = text; } }
 
   if (res.status === 401) {
-    setConn(false, '鉴权失败');
-    openKeyModal('鉴权失败，请重新输入 API Key。');
-    const err = new Error('未授权（401）');
+    setConn(false, '未登录');
+    if (!/^\/api\/auth\//.test(path)) showLogin('登录已过期，请重新登录。');
+    const err = new Error('未登录（401）');
     err.status = 401;
     throw err;
   }
@@ -1655,9 +1655,80 @@ function updateNavCounts() {
   }
 }
 
+/* ---------------------------------------------------------------- 登录（账号密码） */
+function showLogin(msg) {
+  const veil = $('#loginVeil');
+  if (!veil) return;
+  if (msg) { const m = $('#loginMsg'); if (m) m.textContent = msg; }
+  veil.style.display = 'flex';
+  const u = $('#loginUser');
+  if (u) setTimeout(() => u.focus(), 60);
+}
+function hideLogin() {
+  const v = $('#loginVeil');
+  if (v) v.style.display = 'none';
+}
+async function doLogin() {
+  const username = ($('#loginUser').value || '').trim();
+  const password = $('#loginPass').value || '';
+  if (!username || !password) { toast('请输入用户名与密码', 'warn'); return; }
+  const btn = $('#loginBtn');
+  btn.disabled = true; btn.textContent = '登录中…';
+  try {
+    const r = await fetch('/api/auth/login', {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password })
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(d.detail || ('登录失败 ' + r.status));
+    state.user = d.user || { username };
+    $('#loginPass').value = '';
+    hideLogin();
+    renderUser();
+    toast('登录成功', 'ok');
+    await loadChannels();
+    renderRoute();
+  } catch (e) {
+    toast(e.message || '登录失败', 'bad');
+  } finally {
+    btn.disabled = false; btn.textContent = '登 录';
+  }
+}
+async function doLogout() {
+  try { await fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' }); } catch (_) {}
+  state.user = null;
+  renderUser();
+  showLogin('已退出登录');
+}
+async function checkAuth() {
+  try {
+    const r = await fetch('/api/auth/me', { credentials: 'same-origin' });
+    if (!r.ok) return false;
+    const d = await r.json();
+    state.user = { username: d.username, role: d.role };
+    renderUser();
+    return true;
+  } catch (_) { return false; }
+}
+function renderUser() {
+  const el = $('#userName');
+  if (el) el.textContent = state.user ? (state.user.username + (state.user.role === 'admin' ? ' · 管理员' : '')) : '';
+  const btn = $('#userLogout');
+  if (btn) btn.style.display = state.user ? '' : 'none';
+}
+async function changePassword() {
+  const o = ($('#pwOld').value || ''), n = ($('#pwNew').value || '');
+  if (!o || !n) { toast('请填写原密码与新密码', 'warn'); return; }
+  if (n.length < 6) { toast('新密码至少 6 位', 'warn'); return; }
+  const r = await safe(api('/api/auth/password', { method: 'POST', body: { old_password: o, new_password: n } }));
+  if (r.ok) { toast('密码已修改，请重新登录', 'ok'); closeModal('m-user'); doLogout(); }
+  else toast(r.error || '修改失败', 'bad');
+}
+
 /* ---------------------------------------------------------------- 密钥弹窗 */
 function openKeyModal(msg) {
-  $('#keyHint').textContent = msg || '请输入控制台 API Key（u2a_...）。';
+  $('#keyHint').textContent = msg || 'API 密钥用于程序调用（/v1/*），与控制台登录无关。';
   $('#keyInput').value = state.key || '';
   openModal('m-key');
 }
@@ -1722,7 +1793,7 @@ function wire() {
     localStorage.setItem(LS_THEME, state.theme);
     applyTheme();
   });
-  $('#keyBtn').addEventListener('click', () => openKeyModal());
+  $('#keyBtn').addEventListener('click', () => { location.hash = '#keys'; });
 
   // 视图工具条
   $('#acctChannel').addEventListener('change', e => { state.acctChannel = e.target.value; loadAccounts(); });
@@ -1821,19 +1892,31 @@ function wire() {
   $('#confirmYes').addEventListener('click', () => resolveConfirm(true));
   $('#confirmNo').addEventListener('click', () => resolveConfirm(false));
 
+  // 登录 / 用户
+  const lb = $('#loginBtn'); if (lb) lb.addEventListener('click', doLogin);
+  const lp = $('#loginPass'); if (lp) lp.addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
+  const lu = $('#loginUser'); if (lu) lu.addEventListener('keydown', e => { if (e.key === 'Enter') $('#loginPass').focus(); });
+  const lo = $('#userLogout'); if (lo) lo.addEventListener('click', doLogout);
+  const ub = $('#userBtn'); if (ub) ub.addEventListener('click', () => {
+    const n = $('#uName'); if (n && state.user) n.textContent = state.user.username;
+    openModal('m-user');
+  });
+  const pw = $('#pwSubmit'); if (pw) pw.addEventListener('click', changePassword);
+
   // 路由
   window.addEventListener('hashchange', navigate);
 }
 
-function init() {
+async function init() {
   applyTheme();
   wire();
-  if (!state.key) {
-    openKeyModal('首次使用，请输入控制台 API Key。');
+  const ok = await checkAuth();
+  if (!ok) {
+    showLogin('请输入管理员账号密码登录。');
     navigate();
-  } else {
-    loadChannels().then(() => navigate());
+    return;
   }
+  loadChannels().then(() => navigate());
 }
 
 init();

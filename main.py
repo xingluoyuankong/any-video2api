@@ -13,8 +13,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from src.api import (admin_routes, channel_routes, config_routes, openai_routes,
-                     ops_routes, proxy_routes, stats_routes)
+from src.api import (admin_routes, auth_routes, channel_routes, config_routes,
+                     openai_routes, ops_routes, proxy_routes, stats_routes)
 from src.channels.registry import registry
 from src.core.config import ROOT, config
 from src.platform.accounts import manager as account_manager
@@ -22,6 +22,10 @@ from src.platform.keys import PUBLIC_PATHS, keys
 from src.platform.media import MEDIA_DIR, BUCKETS, resolve_local
 from src.platform.jobs import worker
 from src.platform.session import KeepaliveScheduler
+from src.platform.users import SESSION_COOKIE, users
+
+# 控制台登录相关公开路径（登录接口本身必须免鉴权）
+LOGIN_PUBLIC_PATHS = {"/login", "/api/auth/login"}
 
 
 def _keepalive_accounts() -> list:
@@ -58,6 +62,9 @@ async def lifespan(app: FastAPI):
     if bootstrap:
         print(f"[any-video2api] 已生成初始 API Key: {bootstrap}")
         print(f"[any-video2api] 请立即保存；也可写入 config/setting.toml 的 [api].api_key 覆盖。")
+    init_pwd = users.ensure_default_admin()
+    if init_pwd:
+        print("[any-video2api] 已创建管理员账号，初始密码见 data/initial_admin.txt（登录后请立即修改）")
     print(f"[any-video2api] 渠道: {registry.names()}  错误: {registry.errors()}")
     print(f"[any-video2api] 防风控: {'on' if config.antiban_enabled else 'off'}  "
           f"会话保活: {'on' if config.session_enabled else 'off'} "
@@ -83,28 +90,54 @@ app.add_middleware(
 
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
+    """控制台用账号密码会话；程序调用用 API Key。
+
+    - 公开路径（首页/健康/文档/控制台/静态/媒体/登录）直接放行
+    - 其余请求：先认 session cookie，再回退 API Key（供程序调用与兼容）
+    """
     path = request.url.path
-    if request.method == "OPTIONS" or path in PUBLIC_PATHS:
+    if (request.method == "OPTIONS" or path in PUBLIC_PATHS
+            or path in LOGIN_PUBLIC_PATHS):
         return await call_next(request)
     if path.startswith("/media/") or path.startswith("/static/"):
         return await call_next(request)
     if config.auth_disabled:
         return await call_next(request)
+
+    # 1) 程序接口 /v1/*：只认 API Key（控制台会话不能调用生成接口）
+    if path.startswith("/v1/"):
+        provided = request.headers.get("X-API-Key") or request.headers.get("Authorization", "")
+        if keys.authenticate(provided) is not None:
+            return await call_next(request)
+        static_key = config.api_key
+        if static_key and provided.removeprefix("Bearer ").strip() == static_key:
+            return await call_next(request)
+        return JSONResponse({"detail": "invalid or missing api key"}, status_code=401)
+
+    # 2) 控制台会话（账号密码登录）
+    session_user = users.validate_session(request.cookies.get(SESSION_COOKIE))
+    if session_user:
+        request.state.user = session_user
+        return await call_next(request)
+
+    # 3) 回退：API Key（供脚本/自动化调用控制台接口）
     provided = request.headers.get("X-API-Key") or request.headers.get("Authorization", "")
     key_row = keys.authenticate(provided)
-    if key_row is None:
-        # 兼容 config 里写死的单 key
-        static_key = config.api_key
-        if static_key:
-            token = provided.removeprefix("Bearer ").strip()
-            if token == static_key:
-                return await call_next(request)
-        return JSONResponse({"detail": "invalid or missing api key"}, status_code=401)
-    request.state.api_key = key_row
-    return await call_next(request)
+    if key_row is not None:
+        request.state.api_key = key_row
+        return await call_next(request)
+    static_key = config.api_key
+    if static_key and provided.removeprefix("Bearer ").strip() == static_key:
+        return await call_next(request)
+
+    # 4) 未认证
+    if path.startswith("/api/"):
+        return JSONResponse({"detail": "未登录或登录已过期，请重新登录"}, status_code=401)
+    return JSONResponse({"detail": "invalid or missing api key"}, status_code=401)
 
 
 # ---- 路由挂载 ----
+app.include_router(auth_routes.router)
 app.include_router(openai_routes.router)
 app.include_router(channel_routes.router)
 app.include_router(admin_routes.router)
@@ -137,9 +170,10 @@ def media(bucket: str, name: str):
 
 
 # ---- 控制台 ----
+@app.get("/login", response_class=HTMLResponse)
 @app.get("/console", response_class=HTMLResponse)
 def console():
-    """返回新版控制台（index.html）；缺失时回退旧版 console.html。"""
+    """返回控制台页面（登录页与主界面同一入口，前端按登录态切换）。"""
     for name in ("index.html", "console.html"):
         page = STATIC_DIR / name
         if page.exists():
