@@ -6,7 +6,7 @@ import json
 import uuid
 from typing import Optional
 
-from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, Query, Request, UploadFile
 from pydantic import BaseModel
 
 from src.channels.registry import registry
@@ -172,6 +172,92 @@ def login_oauth(channel: str = Query(...)):
         raise HTTPException(status_code=400, detail=str(exc))
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=502, detail=f"生成授权链接失败：{exc}")
+
+
+# ---- OAuth 回调（公开，不需要 API Key）：浏览器/书签把登录态回传到这里 ----
+
+@router.get("/oauth/callback")
+def oauth_callback_page(channel: str = Query(""), state: str = Query("")):
+    """回调落地页：引导用户完成登录态回传。"""
+    from fastapi.responses import HTMLResponse
+    ch = channel or "（未指定渠道）"
+    html = f"""<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>登录回调 · {ch}</title>
+<style>
+ body{{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;max-width:680px;margin:60px auto;
+   padding:0 20px;line-height:1.7;color:#111;background:#fff}}
+ h2{{margin:0 0 6px}} code{{background:#f4f4f5;padding:2px 6px;border-radius:4px;word-break:break-all;font-size:13px}}
+ .box{{border:1px solid #e5e7eb;border-radius:10px;padding:14px 16px;margin:14px 0;background:#fafafa}}
+ .muted{{color:#6b7280;font-size:13px}}
+</style></head><body>
+<h2>登录回调</h2>
+<p class="muted">渠道：<code>{ch}</code>　state：<code>{state or "-"}</code></p>
+<div class="box">
+  <b>这个页面用于接收登录态。</b>
+  <p class="muted">如果你是从控制台点「打开官网登录」跳过来的，请：</p>
+  <ol class="muted">
+    <li>先在官网完成登录（手机号 / 账号密码 / 扫码均可）</li>
+    <li>回到官网页面，按 F12 → Console，粘贴控制台给出的 <code>fetch(...)</code> 命令并回车</li>
+    <li>看到「已收到」提示后，回控制台刷新账号列表</li>
+  </ol>
+</div>
+<p class="muted">若你已配置书签（bookmarklet），在官网页面点一下书签即可自动回传。</p>
+</body></html>"""
+    return HTMLResponse(html)
+
+
+@router.post("/oauth/callback")
+async def oauth_callback_receive(request: Request):
+    """接收回传的登录态并自动建账号。
+
+    支持两种 body：
+      - JSON: {"channel": "...", "cookie": "...", "state": "..."}
+      - 纯文本: 形如 "channel=coze&cookie=..."（书签用 fetch 发 text 也行）
+    """
+    channel = ""
+    cookie = ""
+    try:
+        body = await request.json()
+        channel = (body.get("channel") or "").strip()
+        cookie = (body.get("cookie") or "").strip()
+    except Exception:
+        raw = (await request.body()).decode("utf-8", "replace").strip()
+        for part in raw.split("&"):
+            if part.startswith("channel="):
+                channel = part[len("channel="):]
+            elif part.startswith("cookie="):
+                cookie = part[len("cookie="):]
+        if not channel:
+            channel = request.query_params.get("channel", "")
+    if not channel or not cookie:
+        raise HTTPException(status_code=400, detail="缺少 channel 或 cookie")
+
+    ch = registry.get(channel)
+    if ch is None:
+        raise HTTPException(status_code=404, detail=f"渠道不存在：{channel}")
+
+    # 解析 cookie：兼容 "a=1; b=2" / JSON 数组 / {"cookies":[...]} / 扁平对象
+    try:
+        parsed = json.loads(cookie)
+        cookies = parsed.get("cookies", parsed) if isinstance(parsed, dict) else parsed
+        if not isinstance(cookies, (dict, list)):
+            cookies = {}
+    except Exception:
+        cookies = {}
+        for kv in cookie.split(";"):
+            kv = kv.strip()
+            if "=" in kv:
+                k, v = kv.split("=", 1)
+                cookies[k.strip()] = v.strip()
+
+    if not cookies:
+        raise HTTPException(status_code=400, detail="cookie 解析后为空")
+
+    acc = manager.add(channel, name=f"oauth-{channel}",
+                      cookies=cookies, oauth=None, browser_state=None,
+                      extra={}, proxy=None, note="oauth 回传")
+    return {"ok": True, "channel": channel, "cookies": len(cookies), "account": acc}
 
 
 @router.post("/api/accounts/import")

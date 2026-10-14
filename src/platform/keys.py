@@ -12,7 +12,8 @@ from typing import Any, Dict, List, Optional
 
 from src.platform.db import db, now, jd, jl
 
-PUBLIC_PATHS = {"/", "/health", "/docs", "/openapi.json", "/redoc", "/console", "/favicon.ico"}
+PUBLIC_PATHS = {"/", "/health", "/docs", "/openapi.json", "/redoc", "/console", "/favicon.ico",
+                "/oauth/callback"}
 
 
 def _hash(secret: str) -> str:

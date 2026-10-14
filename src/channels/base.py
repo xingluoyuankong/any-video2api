@@ -240,19 +240,35 @@ class Channel(abc.ABC):
         raise NotImplementedError(f"{self.name} 不支持账密登录")
 
     def login_oauth(self) -> Dict[str, Any]:
-        """返回 {login_url, hint, bookmarklet?}，供前端展示（不启动浏览器）。
+        """返回 {login_url, callback_url, bookmarklet, hint}，供前端展示（不启动浏览器）。
 
-        默认给出官网登录链接（渠道可用 config 的 extra.login_url 覆盖）。
-        渠道若实现了真正的 OAuth/书签回传，可覆写本方法补上 bookmarklet。
+        默认给出官网登录链接 + 后端回调地址 + 书签脚本：
+          用户用无痕窗口登录后，在官网页面执行书签 → Cookie 自动 POST 回后端 → 建账号。
+        渠道若实现了真正的 OAuth 授权码流程，可覆写本方法。
         """
         extra = self.spec.extra or {}
         url = extra.get("login_url") or self.spec.base_url or ""
+        try:
+            from src.core.config import config
+            base = config.public_base.rstrip("/")
+        except Exception:  # noqa: BLE001
+            base = ""
+        cb = f"{base}/oauth/callback" if base else ""
+        bm = ""
+        if cb:
+            bm = ("javascript:(function(){fetch('" + cb + "',{method:'POST',"
+                  "headers:{'Content-Type':'application/json'},"
+                  "body:JSON.stringify({channel:'" + self.name + "',cookie:document.cookie})})"
+                  ".then(function(r){return r.json()}).then(function(j){"
+                  "alert(j.ok?'已回传登录态，请回控制台刷新账号列表':'失败：'+(j.detail||''))})"
+                  ".catch(function(e){alert('回传失败：'+e)})})()")
         out: Dict[str, Any] = {
             "login_url": url,
-            "hint": "用【无痕窗口】打开上面链接登录（不影响本地浏览器账号），"
-                    "登录后回到本弹窗「粘贴 Cookie」导入即可。",
+            "callback_url": cb,
+            "hint": "① 用【无痕窗口】打开官网登录（不影响本地浏览器账号）"
+                    " → ② 登录后在官网页面按 F12 → Console 粘贴下面命令（或点书签）"
+                    " → ③ 回控制台刷新账号列表。",
         }
-        bm = extra.get("bookmarklet")
         if bm:
             out["bookmarklet"] = bm
         return out

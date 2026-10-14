@@ -803,6 +803,52 @@ async function sendSmsCode() {
   else toast('发送失败：' + r.error, 'bad');
 }
 
+/* 选中渠道后，直接显示该渠道的官网登录链接 + 跳转按钮 */
+async function refreshChannelLogin() {
+  const box = $('#impChannelLogin');
+  if (!box) return;
+  const ch = $('#impChannel').value;
+  if (!ch) { box.style.display = 'none'; return; }
+  box.style.display = 'flex';
+  box.className = 'notice';
+  box.innerHTML = '<span class="muted">加载官网登录链接…</span>';
+  const r = await safe(api('/api/accounts/login/oauth?channel=' + encodeURIComponent(ch)));
+  const url = r.ok ? ((r.data || {}).login_url || '') : '';
+  if (!url) {
+    box.innerHTML = '<span class="muted">该渠道未提供官网登录链接</span>';
+    return;
+  }
+  box.innerHTML =
+    '<span>官网登录：<a href="' + esc(url) + '" target="_blank" rel="noopener noreferrer">' + esc(url) + '</a></span>' +
+    '<span style="white-space:nowrap">' +
+    '<a class="btn xs primary" href="' + esc(url) + '" target="_blank" rel="noopener noreferrer">打开官网登录</a> ' +
+    '<button class="btn xs" data-act="copy-text" data-text="' + esc(url) + '">复制</button>' +
+    '</span>';
+}
+
+/* 选中渠道后，直接在渠道下方显示该渠道官网登录链接 + 跳转按钮 */
+async function updateChannelLogin() {
+  const ch = $('#impChannel').value;
+  const box = $('#impChannelLogin');
+  if (!box) return;
+  if (!ch) { box.classList.add('hidden'); return; }
+  const r = await safe(api('/api/accounts/login/oauth?channel=' + encodeURIComponent(ch)));
+  const d = r.ok ? (r.data || {}) : {};
+  const url = d.login_url || '';
+  if (!url) { box.classList.add('hidden'); return; }
+  box.classList.remove('hidden');
+  box.innerHTML =
+    '<div class="card" style="padding:10px 12px;display:flex;justify-content:space-between;' +
+    'align-items:center;gap:10px;flex-wrap:wrap">' +
+    '<div style="min-width:0"><div class="muted" style="font-size:12px;margin-bottom:2px">' +
+    '官网登录链接（用无痕窗口打开，不影响本地浏览器账号）</div>' +
+    '<code style="font-size:12px;word-break:break-all">' + esc(url) + '</code></div>' +
+    '<div style="display:flex;gap:6px">' +
+    '<a class="btn xs primary" href="' + esc(url) + '" target="_blank" rel="noopener noreferrer">打开官网登录</a>' +
+    '<button class="btn xs" data-act="copy-text" data-text="' + esc(url) + '">复制</button>' +
+    '</div></div>';
+}
+
 /* 生成授权链接 / 书签脚本（OAuth 方式）—— 列出每个渠道的官网登录链接 + 跳转按钮 */
 async function startOauth() {
   const out = $('#impOauthOut');
@@ -827,9 +873,19 @@ async function startOauth() {
       ? '<div class="reveal-box" style="margin-top:8px"><code>' + esc(url) + '</code>' +
         '<button class="btn xs" data-act="copy-text" data-text="' + esc(url) + '">复制</button></div>'
       : '';
+    const cb = d.callback_url || '';
+    const bm = d.bookmarklet || '';
+    const cbLine = cb
+      ? '<div class="muted" style="font-size:12px;margin-top:8px">回调地址：<code>' + esc(cb) + '</code></div>'
+      : '';
+    const bmBox = bm
+      ? '<label class="field" style="margin-top:8px"><span>登录后在官网页面执行（F12 → Console 粘贴）</span>' +
+        '<div class="reveal-box"><code style="font-size:11px">' + esc(bm) + '</code>' +
+        '<button class="btn xs" data-act="copy-text" data-text="' + esc(bm) + '">复制</button></div></label>'
+      : '';
     const hint = d.hint ? '<div class="hint" style="margin-top:6px">' + esc(d.hint) + '</div>' : '';
     cards.push('<div class="card" style="padding:12px;' +
-      (isCur ? 'border-color:var(--accent)' : '') + '">' + head + box + hint + '</div>');
+      (isCur ? 'border-color:var(--accent)' : '') + '">' + head + box + cbLine + bmBox + hint + '</div>');
   }
   out.innerHTML = cards.join('');
 }
@@ -843,6 +899,7 @@ function openImport() {
   $('#impNote').value = '';
   if (!$('#impChannel').value) $('#impChannel').value = state.channels[0].name;
   switchImpTab('paste');
+  refreshChannelLogin();
   openModal('m-import');
 }
 
@@ -2010,7 +2067,7 @@ function wire() {
   $('#impSubmit').addEventListener('click', submitImport);
   $('#impSendSms').addEventListener('click', sendSmsCode);
   $('#impOauthStart').addEventListener('click', startOauth);
-  $('#impChannel').addEventListener('change', () => switchImpTab(impTab));
+  $('#impChannel').addEventListener('change', () => { refreshChannelLogin(); switchImpTab(impTab); });
 
   // 编辑
   $('#editSave').addEventListener('click', saveEdit);
