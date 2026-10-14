@@ -21,7 +21,7 @@ from typing import Any, Dict, List, Optional
 import requests
 import urllib3
 
-from .base import AccountSecret, Channel, ChannelSpec
+from .base import AccountSecret, Channel, ChannelSpec, CreditView
 
 urllib3.disable_warnings()
 
@@ -85,6 +85,70 @@ class HailuoChannel(Channel):
         except ValueError:
             payload = {"_raw": resp.text[:300]}
         return payload, resp
+
+    def _get(self, path: str, token: str = "") -> Dict[str, Any]:
+        """GET 请求（签名体与前端一致：GET 时 bodyToYY 为 "{}"）。"""
+        ts = int(time.time() * 1000)
+        params = dict(self._device)
+        params["uuid"] = str(uuid.uuid4())
+        params["unix"] = ts
+        full = path + "?" + urllib.parse.urlencode(params)
+        headers = {
+            "User-Agent": UA,
+            "Accept": "application/json",
+            "Origin": BASE,
+            "Referer": BASE + "/",
+            "yy": _sign(full, "{}", ts),   # GET 空体按 "{}" 参与签名
+        }
+        if token:
+            headers["token"] = token
+        resp = requests.get(BASE + full, headers=headers, timeout=30, verify=False)
+        if resp.status_code == 401:
+            raise RuntimeError("未登录或 cookie(_token) 失效 (HTTP 401)")
+        try:
+            payload = resp.json() if resp.content else {}
+        except ValueError:
+            raise RuntimeError("上游返回非 JSON: %s" % resp.text[:200])
+        info = payload.get("statusInfo") or {}
+        code = info.get("code", 0)
+        if code:
+            raise RuntimeError("海螺业务错误 %s: %s" % (code, info.get("message") or code))
+        return payload.get("data") or {}
+
+    # ---- 额度 -----------------------------------------------------------
+    def _token_of(self, secret: AccountSecret) -> str:
+        if not secret:
+            return ""
+        return str(secret.extra.get("token") or secret.cookies.get("_token") or "")
+
+    def credits(self, secret: AccountSecret) -> CreditView:
+        """GET /v1/api/billing/credit -> {total_credit, sub_credits:[...]}（贝壳）。"""
+        token = self._token_of(secret)
+        if not token:
+            return CreditView(error="缺少凭据：需要 _token（短信登录或官网 Cookie 导入）")
+        try:
+            data = self._get("/v1/api/billing/credit", token=token)
+        except Exception as e:  # noqa: BLE001
+            return CreditView(error=str(e))
+
+        def num(x: Any) -> float:
+            try:
+                return float(x or 0)
+            except Exception:  # noqa: BLE001
+                return 0.0
+
+        total = num(data.get("total_credit"))
+        buckets: Dict[str, float] = {}
+        for i, sub in enumerate(data.get("sub_credits") or []):
+            if not isinstance(sub, dict):
+                continue
+            name = str(sub.get("type") or sub.get("name") or ("sub_%d" % i))
+            val = num(sub.get("credit") or sub.get("credit_amount")
+                      or sub.get("amount") or sub.get("value"))
+            buckets[name] = val
+        view = CreditView(total=total, allocatable=total, buckets=buckets, raw=data)
+        view.message = "来源: GET /v1/api/billing/credit（贝壳=可用数）"
+        return view
 
     # ---- 在线登录 -------------------------------------------------------
     def login_methods(self) -> List[str]:

@@ -16,7 +16,7 @@ from typing import Any, Dict, List, Optional
 import requests
 import urllib3
 
-from .base import AccountSecret, Channel, ChannelSpec
+from .base import AccountSecret, Channel, ChannelSpec, CreditView
 
 urllib3.disable_warnings()
 
@@ -39,6 +39,64 @@ class KlingChannel(Channel):
 
     def _cookie_string(self, session: requests.Session) -> str:
         return "; ".join(f"{c.name}={c.value}" for c in session.cookies)
+
+    # ---- 额度 -----------------------------------------------------------
+    KLING_BASE = "https://klingai.com"
+
+    def credits(self, secret: AccountSecret) -> CreditView:
+        """GET /api/account/pointAndTicket -> 积分/券余额（网页版 Cookie 鉴权）。"""
+        if not secret:
+            return CreditView(error="缺少凭据：需要 klingai.com Cookie（含 kuaishou.ai.portal_st）")
+        cookie = str(secret.extra.get("cookie") or "") or \
+            "; ".join(f"{k}={v}" for k, v in (secret.cookies or {}).items())
+        if not cookie:
+            return CreditView(error="缺少凭据：需要 klingai.com Cookie（含 kuaishou.ai.portal_st）")
+        headers = {
+            "User-Agent": UA,
+            "Referer": self.KLING_BASE + "/app/",
+            "Origin": self.KLING_BASE,
+            "Accept": "application/json, text/plain, */*",
+            "Accept-Language": "zh-CN,zh;q=0.9",
+            "Content-Type": "application/json",
+            "Cookie": cookie,
+        }
+        try:
+            resp = requests.get(self.KLING_BASE + "/api/account/pointAndTicket",
+                                headers=headers, timeout=30, verify=False)
+        except Exception as e:  # noqa: BLE001
+            return CreditView(error="网络请求失败: %s" % e)
+        try:
+            body = resp.json() if resp.content else {}
+        except ValueError:
+            return CreditView(error="上游返回非 JSON (HTTP %s): %s" % (resp.status_code, resp.text[:200]))
+        # 可灵统一信封 {status, result, data, error}
+        if resp.status_code in (401, 403) or not isinstance(body, dict):
+            return CreditView(error="HTTP %s，Cookie 可能已失效" % resp.status_code, raw=body)
+        if body.get("status") not in (200, 0) or body.get("result") not in (1, True, None):
+            err = body.get("error") or {}
+            detail = err.get("detail") or err.get("brief") or body.get("message") or str(body)[:200]
+            return CreditView(error="上游业务错误: %s" % detail, raw=body)
+        data = body.get("data") or {}
+
+        def num(x: Any) -> float:
+            try:
+                return float(x or 0)
+            except Exception:  # noqa: BLE001
+                return 0.0
+
+        points = num(data.get("points"))
+        view = CreditView(
+            total=points,                       # 可用数 = 积分余额
+            allocatable=points,
+            buckets={
+                "points": points,
+                "future_points": num(data.get("futurePoints")),
+                "tickets": num(data.get("tickets")),
+            },
+            raw=body,
+        )
+        view.message = "来源: GET /api/account/pointAndTicket（points=可用数）"
+        return view
 
     # ---- 在线登录 -------------------------------------------------------
     def login_methods(self) -> List[str]:

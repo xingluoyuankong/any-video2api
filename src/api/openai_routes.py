@@ -129,8 +129,13 @@ async def upload_file(request: Request, channel: str = Query("jimeng")):
         raise HTTPException(status_code=409, detail="没有可用账号")
     secret = manager.secret(row["id"])
     try:
-        ref = ch.upload(secret, data, getattr(upload, "filename", "asset.bin"),
-                        getattr(upload, "content_type", "application/octet-stream"))
+        # 渠道 upload 是同步 requests 实现（可能耗时 120s+），
+        # 直接在这里调用会阻塞事件循环、拖死整个服务 —— 必须丢线程池。
+        from starlette.concurrency import run_in_threadpool
+        ref = await run_in_threadpool(
+            ch.upload, secret, data,
+            getattr(upload, "filename", "asset.bin"),
+            getattr(upload, "content_type", "application/octet-stream"))
     except NotImplementedError as e:
         raise HTTPException(status_code=501, detail=str(e))
     return {"object": "file", "channel": channel, "uri": ref.uri, "url": ref.url}

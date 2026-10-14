@@ -18,7 +18,7 @@ CREATE TABLE IF NOT EXISTS accounts(
   total_generations INTEGER DEFAULT 0, total_requests INTEGER DEFAULT 0,
   total_success INTEGER DEFAULT 0, total_failure INTEGER DEFAULT 0,
   consecutive_errors INTEGER DEFAULT 0, cooldown_until REAL, error_count INTEGER DEFAULT 0,
-  note TEXT);
+  note TEXT, account_type TEXT DEFAULT '');
 CREATE TABLE IF NOT EXISTS account_secrets(
   account_id TEXT PRIMARY KEY, encrypted_cookies TEXT, encrypted_browser_state TEXT,
   encrypted_oauth TEXT, encrypted_extra TEXT, cookie_updated_at REAL, token_updated_at REAL);
@@ -63,7 +63,22 @@ class DB:
         self.conn.execute("PRAGMA synchronous=NORMAL")
         self.conn.execute("PRAGMA busy_timeout=5000")
         self.conn.executescript(SCHEMA)
+        self._migrate()
         self.conn.commit()
+
+    def _migrate(self) -> None:
+        """轻量迁移：确保新增列存在（老库自动补列，避免 schema 与代码漂移）。"""
+        wanted = [
+            ("accounts", "account_type",
+             "ALTER TABLE accounts ADD COLUMN account_type TEXT DEFAULT ''"),
+        ]
+        for table, col, ddl in wanted:
+            try:
+                cols = [r[1] for r in self.conn.execute("PRAGMA table_info(%s)" % table)]
+                if col not in cols:
+                    self.conn.execute(ddl)
+            except Exception:  # noqa: BLE001
+                pass
 
     def execute(self, sql, args=(), commit=False):
         with self.lock:

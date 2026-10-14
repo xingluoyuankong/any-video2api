@@ -1,0 +1,42 @@
+{
+  "adapter": "src.channels.pixverse:PixverseChannel",
+  "display_name": "PixVerse 拍我AI (pai.video)",
+  "kind": "video",
+  "base_url": "https://cn-app-api.pixverseai.cn/creative_platform",
+  "proxy": "",
+  "timeout": 120,
+  "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36",
+  "transports": ["requests"],
+  "extra": {
+    "login_url": "https://pai.video/login",
+    "home_url": "https://pai.video/"
+  },
+  "supports": {
+    "video": true,
+    "image": false,
+    "upload": false,
+    "login": true,
+    "credits": true
+  },
+  "models": {
+    "v6": "v6",
+    "c1": "pixverse-c1",
+    "v5.6": "v5.6",
+    "v5.5": "v5.5",
+    "v5-fast": "v5-fast",
+    "v5": "v5",
+    "v4.5": "v4.5",
+    "sora-2": "sora-2",
+    "sora-2-pro": "sora-2-pro",
+    "veo-3.1-lite": "veo-3.1-lite",
+    "veo-3.1-standard": "veo-3.1-standard",
+    "veo-3.1-fast": "veo-3.1-fast",
+    "seedance-2.0-standard": "seedance-2.0-standard",
+    "seedance-2.0-fast": "seedance-2.0-fast",
+    "seedance-2.5": "seedance-2.5",
+    "kling-3.0-standard": "kling-3.0-standard",
+    "kling-3.0-pro": "kling-3.0-pro",
+    "minimax-h3": "minimax-h3",
+    "wan-3.0": "wan-3.0"
+  }
+}

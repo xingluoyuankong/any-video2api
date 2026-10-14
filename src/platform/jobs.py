@@ -156,7 +156,13 @@ class JobWorker:
             try:
                 self._advance(job)
             except Exception as exc:
+                # 兜底：非上游异常（渠道 bug 等）也必须推进调度，
+                # 否则 pending() 会每 0.5s 重捞同一任务 -> 无退避无限重试。
                 self.store.update(job["id"], error=str(exc)[:500])
+                try:
+                    self._reschedule(job, note="advance error")
+                except Exception:  # noqa: BLE001
+                    pass
         return True
 
     # ---- 单任务推进 ----
@@ -192,6 +198,10 @@ class JobWorker:
             except UpstreamError as e:
                 manager.release(aid, False, e.error_class)
                 self._fail(job, e)
+                return
+            except Exception as e:   # noqa: BLE001 渠道内部异常也必须释放计数，否则泄漏
+                manager.release(aid, False, "internal")
+                self._fail(job, UpstreamError(str(e)[:300], "internal"))
                 return
             if not res.accepted:
                 manager.release(aid, False, res.error_class)
