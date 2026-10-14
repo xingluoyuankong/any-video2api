@@ -344,7 +344,6 @@ function renderRoute() {
 
 /* ---------------------------------------------------------------- 渠道元信息 */
 async function loadChannels() {
-  if (!state.key) return;
   const r = await safe(api('/api/channels'));
   if (r.ok && r.data) {
     state.channels = r.data.channels || [];
@@ -379,7 +378,6 @@ function fillChannelSelects() {
  * ========================================================================== */
 async function loadOverview() {
   const view = $('#body-overview');
-  if (!state.key) { view.innerHTML = needKeyHtml(); return; }
   view.innerHTML = loadingHtml();
   // 逐项容错：新增的 /api/stats/overview 未实现时不应拖垮概览
   const [hR, sR, stR] = await Promise.all([
@@ -819,7 +817,6 @@ async function submitImport() {
 async function loadProxies() {
   const box = $('#body-proxies');
   const poolBox = $('#body-pools');
-  if (!state.key) { box.innerHTML = needKeyHtml(); poolBox.innerHTML = ''; $('#pxStats').innerHTML = ''; return; }
   box.innerHTML = loadingHtml();
   poolBox.innerHTML = loadingHtml();
 
@@ -1027,7 +1024,6 @@ async function clearPool(realm) {
  * ========================================================================== */
 async function loadJobs() {
   const box = $('#body-jobs');
-  if (!state.key) { box.innerHTML = needKeyHtml(); return; }
   box.innerHTML = loadingHtml();
   const params = new URLSearchParams();
   params.set('limit', '100');
@@ -1073,7 +1069,6 @@ async function cancelJob(id) {
  * ========================================================================== */
 async function loadKeys() {
   const box = $('#body-keys');
-  if (!state.key) { box.innerHTML = needKeyHtml(); return; }
   box.innerHTML = loadingHtml();
   const r = await safe(api('/api/keys'));
   if (!r.ok) { box.innerHTML = errorHtml(r.error); return; }
@@ -1189,7 +1184,6 @@ function switchLogTab(tab) {
 async function loadLogs() {
   const box = $('#body-logs');
   const statsBox = $('#logStats');
-  if (!state.key) { if (statsBox) statsBox.innerHTML = ''; box.innerHTML = needKeyHtml(); return; }
   box.innerHTML = loadingHtml();
   const params = new URLSearchParams();
   params.set('limit', String(state.logLimit));
@@ -1254,7 +1248,6 @@ function logsHtml(events) {
 async function loadUsage() {
   const statsBox = $('#usageStats');
   const box = $('#body-usage');
-  if (!state.key) { if (statsBox) statsBox.innerHTML = ''; box.innerHTML = needKeyHtml(); return; }
   box.innerHTML = loadingHtml();
   const params = new URLSearchParams();
   params.set('days', String(state.usage.days));
@@ -1362,7 +1355,6 @@ function usageAccountTable(list) {
  * ========================================================================== */
 async function loadModels() {
   const box = $('#body-models');
-  if (!state.key) { box.innerHTML = needKeyHtml(); return; }
   box.innerHTML = loadingHtml();
   const r = await safe(api('/api/models'));
   if (!r.ok) {
@@ -1509,7 +1501,6 @@ const CFG_META = {
 
 async function loadConfig() {
   const box = $('#body-config');
-  if (!state.key) { box.innerHTML = needKeyHtml(); return; }
   box.innerHTML = loadingHtml();
   const [cfgR, chR] = await Promise.all([
     safe(api('/api/config')),
