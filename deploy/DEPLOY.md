@@ -50,6 +50,22 @@ cat /opt/any-video2api/data/initial_admin.txt     # 查看初始密码
 
 ### 1. 添加隧道 Public Hostname
 
+**方式 A：一条命令（需有效的 Cloudflare API Token）**
+
+```bash
+CF_TOKEN=<你的API_Token> ./deploy/cf-setup.sh
+# 默认配置 video.xzx-yuan.ccwu.cc -> http://localhost:8800，并自动建 DNS 记录
+```
+
+Token 权限要求（Cloudflare → My Profile → API Tokens → Create Token → Custom token）：
+- `Account` → `Cloudflare Tunnel` → **Edit**
+- `Zone` → `DNS` → **Edit**（Zone Resources 包含 `xzx-yuan.ccwu.cc`）
+
+> 注意：要的是 **API Token**（My Profile → API Tokens），不是 Tunnel Token（`eyJ...`）
+> 也不是 Access Service Token。用错类型会报 `Invalid API Token`。
+
+**方式 B：面板手动（1 分钟）**
+
 路径：**Zero Trust → Networks → Tunnels → 选中现有隧道 → Public Hostname → Add a public hostname**
 
 | 字段 | 值 |
