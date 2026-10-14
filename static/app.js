@@ -782,6 +782,8 @@ function switchImpTab(tab) {
       el.className = 'notice';
     }
   }
+  // 切到授权链接 tab 时自动列出各渠道官网登录链接
+  if (tab === 'oauth' && $('#impOauthOut')) startOauth();
 }
 
 /* 发送短信验证码（手机号登录） */
@@ -801,24 +803,35 @@ async function sendSmsCode() {
   else toast('发送失败：' + r.error, 'bad');
 }
 
-/* 生成授权链接 / 书签脚本（OAuth 方式） */
+/* 生成授权链接 / 书签脚本（OAuth 方式）—— 列出每个渠道的官网登录链接 + 跳转按钮 */
 async function startOauth() {
-  const channel = $('#impChannel').value;
-  if (!channel) { toast('请选择渠道', 'warn'); return; }
   const out = $('#impOauthOut');
-  out.innerHTML = '<div class="loading"><div class="spinner"></div>生成中…</div>';
-  const r = await safe(api('/api/accounts/login/oauth?channel=' + encodeURIComponent(channel)));
-  if (!r.ok) { out.innerHTML = '<div class="notice bad">生成失败：' + esc(r.error) + '</div>'; return; }
-  const d = r.data || {};
-  const box = (label, val) => val
-    ? '<label class="field"><span>' + esc(label) + '</span>' +
-      '<div class="reveal-box"><code>' + esc(val) + '</code>' +
-      '<button class="btn xs" data-act="copy-text" data-text="' + esc(val) + '">复制</button></div></label>'
-    : '';
-  const html = box('授权链接（用无痕窗口打开）', d.login_url) +
-    box('登录后执行（F12 → Console 粘贴）', d.bookmarklet) +
-    (d.hint ? '<div class="hint">' + esc(d.hint) + '</div>' : '');
-  out.innerHTML = html || '<div class="notice warn">该渠道未提供授权链接</div>';
+  out.innerHTML = '<div class="loading"><div class="spinner"></div>加载各渠道登录链接…</div>';
+  const chans = state.channels || [];
+  if (!chans.length) { out.innerHTML = '<div class="notice warn">渠道未加载</div>'; return; }
+  const cur = $('#impChannel').value;
+  const cards = [];
+  for (const ch of chans) {
+    const r = await safe(api('/api/accounts/login/oauth?channel=' + encodeURIComponent(ch.name)));
+    const d = r.ok ? (r.data || {}) : {};
+    const url = d.login_url || '';
+    const isCur = ch.name === cur;
+    const head = '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px">' +
+      '<div><b>' + esc(ch.display_name || ch.name) + '</b> ' +
+      '<span class="muted" style="font-size:12px">' + esc(ch.name) + '</span></div>' +
+      (url
+        ? '<a class="btn xs primary" href="' + esc(url) + '" target="_blank" rel="noopener noreferrer">打开官网登录</a>'
+        : '<span class="muted">无登录链接</span>') +
+      '</div>';
+    const box = url
+      ? '<div class="reveal-box" style="margin-top:8px"><code>' + esc(url) + '</code>' +
+        '<button class="btn xs" data-act="copy-text" data-text="' + esc(url) + '">复制</button></div>'
+      : '';
+    const hint = d.hint ? '<div class="hint" style="margin-top:6px">' + esc(d.hint) + '</div>' : '';
+    cards.push('<div class="card" style="padding:12px;' +
+      (isCur ? 'border-color:var(--accent)' : '') + '">' + head + box + hint + '</div>');
+  }
+  out.innerHTML = cards.join('');
 }
 
 function openImport() {

@@ -7,6 +7,11 @@
   "timeout": 120,
   "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
   "transports": ["requests"],
+  "login_url": "https://www.coze.cn/sign",
+  "extra": {
+    "login_url": "https://www.coze.cn/sign",
+    "home_url": "https://www.coze.cn/"
+  },
   "supports": {
     "video": true,
     "image": false,

@@ -220,8 +220,12 @@ class Channel(abc.ABC):
 
     # ---- 在线登录（可选，默认不支持；实现后控制台「导入账号」会出现对应方式）----
     def login_methods(self) -> List[str]:
-        """声明本渠道支持的在线登录方式：sms | pwd | oauth。"""
-        return []
+        """声明本渠道支持的在线登录方式：sms | pwd | oauth。
+
+        默认返回 ["oauth"]：所有渠道都至少能给出官网登录链接 + 跳转。
+        渠道实现真正的短信/账密登录后，覆写为 ["sms", "pwd", "oauth"] 等。
+        """
+        return ["oauth"]
 
     def login_send_sms(self, phone: str, area_code: str = "86") -> Dict[str, Any]:
         """发送登录短信验证码。"""
@@ -236,8 +240,22 @@ class Channel(abc.ABC):
         raise NotImplementedError(f"{self.name} 不支持账密登录")
 
     def login_oauth(self) -> Dict[str, Any]:
-        """返回 {login_url, bookmarklet, hint}，供前端展示（不启动浏览器）。"""
-        raise NotImplementedError(f"{self.name} 不支持授权链接登录")
+        """返回 {login_url, hint, bookmarklet?}，供前端展示（不启动浏览器）。
+
+        默认给出官网登录链接（渠道可用 config 的 extra.login_url 覆盖）。
+        渠道若实现了真正的 OAuth/书签回传，可覆写本方法补上 bookmarklet。
+        """
+        extra = self.spec.extra or {}
+        url = extra.get("login_url") or self.spec.base_url or ""
+        out: Dict[str, Any] = {
+            "login_url": url,
+            "hint": "用【无痕窗口】打开上面链接登录（不影响本地浏览器账号），"
+                    "登录后回到本弹窗「粘贴 Cookie」导入即可。",
+        }
+        bm = extra.get("bookmarklet")
+        if bm:
+            out["bookmarklet"] = bm
+        return out
 
     # ---- 错误归一化（渠道覆写以识别自家错误码）--------------------------
     def classify_error(self, payload: Any) -> str:

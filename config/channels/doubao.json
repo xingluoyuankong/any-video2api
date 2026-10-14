@@ -28,6 +28,8 @@
     "image_upload": {"method": "POST", "path": "/samantha/pages/upload_image"}
   },
   "extra": {
+    "login_url": "https://www.doubao.com/chat/",
+    "home_url": "https://www.doubao.com/",
     "aid": "582478",
     "auth": "cookie+query(msToken/fp/device_id/web_id)",
     "signature": "none",
