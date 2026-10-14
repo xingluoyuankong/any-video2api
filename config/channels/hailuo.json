@@ -1,0 +1,21 @@
+{
+  "adapter": "src.channels.hailuo:HailuoChannel",
+  "display_name": "海螺 AI (Hailuo)",
+  "kind": "video",
+  "base_url": "https://hailuoai.video",
+  "proxy": "",
+  "timeout": 120,
+  "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36",
+  "transports": ["requests"],
+  "extra": {
+    "login_url": "https://hailuoai.video/",
+    "home_url": "https://hailuoai.video/"
+  },
+  "supports": {
+    "video": false,
+    "image": false,
+    "upload": false,
+    "login": true
+  },
+  "models": {}
+}

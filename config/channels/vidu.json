@@ -1,0 +1,21 @@
+{
+  "adapter": "src.channels.vidu:ViduChannel",
+  "display_name": "Vidu",
+  "kind": "video",
+  "base_url": "https://www.vidu.cn",
+  "proxy": "",
+  "timeout": 120,
+  "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36",
+  "transports": ["requests"],
+  "extra": {
+    "login_url": "https://www.vidu.cn/",
+    "home_url": "https://www.vidu.cn/"
+  },
+  "supports": {
+    "video": false,
+    "image": false,
+    "upload": false,
+    "login": true
+  },
+  "models": {}
+}
