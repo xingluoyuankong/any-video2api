@@ -18,10 +18,26 @@
 
 | 地址 | 状态 |
 |---|---|
-| **http://52-64-8-93.sslip.io/console** | ✅ 可用（sslip.io 自动解析到该 IP，零 DNS 配置） |
+| **http://52-64-8-93.sslip.io/login** | ✅ 可用（控制台登录页，账号密码） |
+| **http://52-64-8-93.sslip.io/console** | ✅ 可用（登录后进入） |
 | http://52-64-8-93.sslip.io/health | ✅ 可用 |
 | https://52-64-8-93.sslip.io | ⏳ 证书已签，待 Lightsail 防火墙开放 443 |
 | https://video.xzx-yuan.ccwu.cc | ⏳ 待 Cloudflare 面板配置（见下） |
+
+### 控制台登录凭据
+
+| 项 | 值 |
+|---|---|
+| 用户名 | `admin` |
+| 密码 | `/opt/any-video2api/data/initial_admin.txt`（`600`，首次启动生成） |
+
+```bash
+cat /opt/any-video2api/data/initial_admin.txt     # 查看初始密码
+# 登录后请在右上角「账号」中修改密码，然后删除该文件
+```
+
+> 程序调用仍用 API Key（`/v1/*`）；控制台会话不能调用生成接口。
+> API Key 在 `/opt/any-video2api/.env`（`AV2A_API_KEY`），或在控制台「密钥」页新建。
 
 ---
 
