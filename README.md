@@ -287,6 +287,9 @@ any-video2api/
 
 ## 部署
 
+> 现成可用的配置文件见 [`deploy/`](deploy/)：`nginx.conf`、`any-video2api.service`，
+> 以及[部署记录与域名配置步骤](deploy/DEPLOY.md)。
+
 ### Docker
 
 ```dockerfile

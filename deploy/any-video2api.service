@@ -1,0 +1,26 @@
+# Any Video2API systemd 服务单元
+#
+# 部署位置：/etc/systemd/system/any-video2api.service
+# 启用：    sudo systemctl daemon-reload && sudo systemctl enable --now any-video2api
+#
+# 密钥通过 EnvironmentFile 注入（chmod 600），不写进本文件：
+#   /opt/any-video2api/.env
+#   AV2A_API_KEY=<强随机值>
+
+[Unit]
+Description=Any Video2API
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/opt/any-video2api
+EnvironmentFile=/opt/any-video2api/.env
+ExecStart=/opt/any-video2api/.venv/bin/python -m uvicorn main:app --host 127.0.0.1 --port 8800
+Restart=always
+RestartSec=5
+StandardOutput=append:/var/log/any-video2api.log
+StandardError=append:/var/log/any-video2api.log
+
+[Install]
+WantedBy=multi-user.target
