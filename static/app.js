@@ -102,6 +102,7 @@ const CH_META = {
   jimeng: { label: '即梦', glyph: '即' },
   tiktok: { label: 'TikTok', glyph: 'TT' },
   coze:   { label: '扣子', glyph: '扣' },
+  doubao: { label: '豆包', glyph: '豆' },
 };
 const CAP_LABELS = {
   video: '视频', image: '图片', upload: '上传', checkin: '签到',
@@ -481,13 +482,13 @@ function overviewHtml(health, summary, stats) {
  * ========================================================================== */
 async function loadAccounts() {
   const box = $('#body-accounts');
-  if (!state.key) { box.innerHTML = needKeyHtml(); return; }
+  const tabs = $('#acctTabs');
   box.innerHTML = loadingHtml();
-  const q = state.acctChannel ? '?channel=' + encodeURIComponent(state.acctChannel) : '';
+  // 始终拉全部账号，前端按渠道标签过滤（保证各标签计数准确）
   const [accR, sessR, pxR] = await Promise.all([
-    safe(api('/api/accounts' + q)),
+    safe(api('/api/accounts')),
     safe(api('/api/sessions')),
-    safe(api('/api/proxy/accounts' + q)),
+    safe(api('/api/proxy/accounts')),
   ]);
   if (!accR.ok) { box.innerHTML = errorHtml(accR.error); toast('账号加载失败：' + accR.error, 'bad'); return; }
   state.accounts = (accR.data && accR.data.accounts) || [];
@@ -497,35 +498,55 @@ async function loadAccounts() {
   state.proxyMap = {};
   const px = pxR.ok ? (pxR.data || {}) : {};
   (px.accounts || []).forEach(p => { state.proxyMap[p.account_id] = p; });
-  box.innerHTML = accountsHtml(state.accounts);
+  if (tabs) tabs.innerHTML = acctTabsHtml();
+  renderAcctBody();
   updateNavCounts();
 }
 
+/* 渠道标签页：全部 / 各渠道，带账号数与冷却提示 */
+function acctTabsHtml() {
+  const counts = {}, cooling = {};
+  state.accounts.forEach(a => {
+    counts[a.channel] = (counts[a.channel] || 0) + 1;
+    if (a.cooling) cooling[a.channel] = (cooling[a.channel] || 0) + 1;
+  });
+  const names = state.channels.filter(c => !c.error).map(c => c.name);
+  Object.keys(counts).forEach(ch => { if (names.indexOf(ch) < 0) names.push(ch); });
+  const cur = state.acctChannel || '';
+  const mk = (ch, label, n, cool, key) =>
+    '<button class="ch-tab' + (key ? ' ch-' + key : '') + (cur === ch ? ' active' : '') + '"' +
+      ' data-act="acct-tab" data-ch="' + esc(ch) + '">' +
+      '<span class="cdot"></span>' + esc(label) +
+      '<span class="t-n">' + n + '</span>' +
+      (cool ? '<span class="t-warn" title="冷却中">●' + cool + '</span>' : '') +
+    '</button>';
+  let html = mk('', '全部', state.accounts.length, 0, '');
+  names.forEach(name => {
+    const key = CH_META[name] ? name : 'other';
+    html += mk(name, chLabel(name), counts[name] || 0, cooling[name] || 0, key);
+  });
+  return html;
+}
+
+/* 按当前标签渲染账号表 */
+function renderAcctBody() {
+  const box = $('#body-accounts');
+  const cur = state.acctChannel || '';
+  const list = cur ? state.accounts.filter(a => a.channel === cur) : state.accounts;
+  const scope = $('#acctScope');
+  if (scope) scope.textContent = (cur ? chLabel(cur) : '全部渠道') + ' · ' + list.length + ' 个账号';
+  box.innerHTML = accountsHtml(list);
+}
+
 function accountsHtml(accounts) {
+  const cur = state.acctChannel || '';
   if (!accounts.length) {
-    return '<div class="table-wrap">' + emptyHtml('暂无账号', '点击右上角「导入账号」添加 Cookie 或上传凭据文件。',
+    return '<div class="table-wrap">' + emptyHtml(
+      cur ? (chLabel(cur) + ' 暂无账号') : '暂无账号',
+      '点击「导入账号」添加 Cookie 或上传凭据文件。',
       '<button class="btn primary" data-act="import-open">导入账号</button>') + '</div>';
   }
-  // 按渠道分组，保持注册表顺序
-  const order = state.channels.filter(c => !c.error).map(c => c.name);
-  const groups = {};
-  accounts.forEach(a => { (groups[a.channel] = groups[a.channel] || []).push(a); });
-  Object.keys(groups).forEach(ch => { if (!order.includes(ch)) order.push(ch); });
-
-  return order.filter(ch => groups[ch] && groups[ch].length).map(ch => {
-    const list = groups[ch];
-    const collapsed = !!state.collapsed[ch];
-    const active = list.filter(a => a.status === 'active').length;
-    const cool = list.filter(a => a.cooling).length;
-    return '<div class="group' + (collapsed ? ' collapsed' : '') + '" data-group="' + esc(ch) + '">' +
-      '<button class="group-head" data-act="toggle-group" data-ch="' + esc(ch) + '">' +
-        '<span class="chev">▾</span><span class="ch-dot ch-' + (CH_META[ch] ? ch : 'other') + '"></span>' +
-        '<b>' + esc(chLabel(ch)) + '</b><span class="g-meta mono">' + esc(ch) + '</span>' +
-        '<span class="sp"></span>' +
-        '<span class="g-meta">' + list.length + ' 个 · 活跃 ' + active + (cool ? ' · 冷却 ' + cool : '') + '</span>' +
-      '</button>' +
-      '<div class="group-body">' + accountTable(list) + '</div></div>';
-  }).join('');
+  return '<div class="table-wrap">' + accountTable(accounts) + '</div>';
 }
 
 function accountTable(list) {
@@ -1656,24 +1677,45 @@ function updateNavCounts() {
 }
 
 /* ---------------------------------------------------------------- 登录（账号密码） */
-function showLogin(msg) {
+function showLogin(msg, kind) {
   const veil = $('#loginVeil');
   if (!veil) return;
-  if (msg) { const m = $('#loginMsg'); if (m) m.textContent = msg; }
-  veil.style.display = 'flex';
+  const m = $('#loginMsg');
+  if (m) {
+    m.textContent = msg || '请输入管理员账号密码登录。';
+    m.className = 'login-msg' + (kind ? ' ' + kind : '');
+  }
+  veil.classList.add('on');
   const u = $('#loginUser');
-  if (u) setTimeout(() => u.focus(), 60);
+  if (u) setTimeout(() => { try { u.focus(); } catch (_) {} }, 60);
 }
 function hideLogin() {
   const v = $('#loginVeil');
-  if (v) v.style.display = 'none';
+  if (v) v.classList.remove('on');
+}
+function loginMsg(text, kind) {
+  const m = $('#loginMsg');
+  if (m) { m.textContent = text; m.className = 'login-msg' + (kind ? ' ' + kind : ''); }
+}
+function togglePw() {
+  const inp = $('#loginPass'), eye = $('#loginEye');
+  if (!inp) return;
+  const show = inp.type === 'password';
+  inp.type = show ? 'text' : 'password';
+  if (eye) { eye.textContent = show ? '🙈' : '👁'; eye.setAttribute('aria-label', show ? '隐藏密码' : '显示密码'); }
+  inp.focus();
 }
 async function doLogin() {
   const username = ($('#loginUser').value || '').trim();
   const password = $('#loginPass').value || '';
-  if (!username || !password) { toast('请输入用户名与密码', 'warn'); return; }
   const btn = $('#loginBtn');
+  if (!username || !password) {
+    loginMsg('请输入用户名与密码', 'bad');
+    (!username ? $('#loginUser') : $('#loginPass')).focus();
+    return;
+  }
   btn.disabled = true; btn.textContent = '登录中…';
+  loginMsg('正在验证…');
   try {
     const r = await fetch('/api/auth/login', {
       method: 'POST', credentials: 'same-origin',
@@ -1681,7 +1723,12 @@ async function doLogin() {
       body: JSON.stringify({ username, password })
     });
     const d = await r.json().catch(() => ({}));
-    if (!r.ok) throw new Error(d.detail || ('登录失败 ' + r.status));
+    if (!r.ok) {
+      loginMsg((d && d.detail) ? d.detail : ('登录失败 ' + r.status), 'bad');
+      $('#loginPass').value = '';
+      $('#loginPass').focus();
+      return;
+    }
     state.user = d.user || { username };
     $('#loginPass').value = '';
     hideLogin();
@@ -1690,6 +1737,7 @@ async function doLogin() {
     await loadChannels();
     renderRoute();
   } catch (e) {
+    loginMsg('网络错误：' + (e.message || ''), 'bad');
     toast(e.message || '登录失败', 'bad');
   } finally {
     btn.disabled = false; btn.textContent = '登 录';
@@ -1750,6 +1798,12 @@ async function handleAction(act, el) {
   switch (act) {
     case 'open-key': openKeyModal(); break;
     case 'import-open': openImport(); break;
+    case 'acct-tab': {
+      state.acctChannel = el.dataset.ch || '';
+      $$('#acctTabs .ch-tab').forEach(b => b.classList.toggle('active', (b.dataset.ch || '') === state.acctChannel));
+      renderAcctBody();
+      break;
+    }
     case 'toggle-group': {
       const ch = el.dataset.ch;
       state.collapsed[ch] = !state.collapsed[ch];
@@ -1796,7 +1850,7 @@ function wire() {
   $('#keyBtn').addEventListener('click', () => { location.hash = '#keys'; });
 
   // 视图工具条
-  $('#acctChannel').addEventListener('change', e => { state.acctChannel = e.target.value; loadAccounts(); });
+  // 渠道切换由账号页的渠道标签页（#acctTabs）承担，见 handleAction 的 acct-tab
   $('#acctCheckAll').addEventListener('click', opsVerifyAll);
   $('#acctCheckinAll').addEventListener('click', opsCheckinAll);
   $('#acctKeepaliveAll').addEventListener('click', opsKeepaliveAll);
@@ -1893,9 +1947,9 @@ function wire() {
   $('#confirmNo').addEventListener('click', () => resolveConfirm(false));
 
   // 登录 / 用户
-  const lb = $('#loginBtn'); if (lb) lb.addEventListener('click', doLogin);
-  const lp = $('#loginPass'); if (lp) lp.addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
-  const lu = $('#loginUser'); if (lu) lu.addEventListener('keydown', e => { if (e.key === 'Enter') $('#loginPass').focus(); });
+  const lf = $('#loginForm'); if (lf) lf.addEventListener('submit', e => { e.preventDefault(); doLogin(); });
+  const le = $('#loginEye'); if (le) le.addEventListener('click', togglePw);
+  const lu = $('#loginUser'); if (lu) lu.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); $('#loginPass').focus(); } });
   const lo = $('#userLogout'); if (lo) lo.addEventListener('click', doLogout);
   const ub = $('#userBtn'); if (ub) ub.addEventListener('click', () => {
     const n = $('#uName'); if (n && state.user) n.textContent = state.user.username;

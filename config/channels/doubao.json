@@ -1,0 +1,42 @@
+{
+  "adapter": "src.channels.doubao:DoubaoChannel",
+  "display_name": "豆包 (Doubao)",
+  "kind": "video",
+  "base_url": "https://www.doubao.com",
+  "proxy": "",
+  "timeout": 120,
+  "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36",
+  "transports": ["requests"],
+  "supports": {
+    "video": true,
+    "image": false,
+    "upload": false,
+    "checkin": false,
+    "oauth": false,
+    "credits": false,
+    "models": true,
+    "verify": true
+  },
+  "models": {
+    "doubao-video": "doubao-video",
+    "doubao-video-i2v": "doubao-video-i2v"
+  },
+  "endpoints": {
+    "submit":       {"method": "POST", "path": "/samantha/chat/completion"},
+    "poll":         {"method": "POST", "path": "/samantha/chat/async/stream"},
+    "csrf":         {"method": "GET",  "path": "/passport/safe/csrf_token/"},
+    "image_upload": {"method": "POST", "path": "/samantha/pages/upload_image"}
+  },
+  "extra": {
+    "aid": "582478",
+    "auth": "cookie+query(msToken/fp/device_id/web_id)",
+    "signature": "none",
+    "video_content_type_in": 2020,
+    "video_content_type_out": 2021,
+    "video_skill_type": 17,
+    "async_task_reason": 1,
+    "risk_error_codes": [710022002, 710022004],
+    "expired_error_code": 710012001,
+    "note": "鉴权=Cookie(sessionid/ttwid/passport_csrf_token)+URL query 设备指纹参数，无 a_bogus/X-Bogus；模型由服务端按 skill_type=17 选定（README 称 Seedance 2.0），网页协议未暴露显式 model id"
+  }
+}

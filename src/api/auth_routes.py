@@ -20,9 +20,16 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel
 
+from src.platform import audit
+from src.platform.antiban import rate_limiter
 from src.platform.users import SESSION_COOKIE, SESSION_TTL, users
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
+
+# 防爆破：滑动窗口（秒）与上限
+LOGIN_WINDOW = 300.0
+LOGIN_MAX_PER_IP = 20
+LOGIN_MAX_PER_USER = 10
 
 
 def _client_ip(request: Request) -> str:
@@ -32,12 +39,19 @@ def _client_ip(request: Request) -> str:
     return request.client.host if request.client else ""
 
 
-def _set_session_cookie(response: Response, token: str) -> None:
+def _is_https(request: Request) -> bool:
+    """判断外部访问是否为 HTTPS（直连或经 Cloudflare/Nginx 边缘终止 TLS）。"""
+    proto = (request.headers.get("x-forwarded-proto", "") or "").split(",")[0].strip()
+    if proto:
+        return proto == "https"
+    return request.url.scheme == "https"
+
+
+def _set_session_cookie(response: Response, token: str, secure: bool = False) -> None:
     response.set_cookie(
         key=SESSION_COOKIE, value=token, max_age=int(SESSION_TTL),
         httponly=True, samesite="lax", path="/",
-        # 走 Cloudflare / HTTPS 时由边缘终止 TLS，本地是 HTTP，故不强制 secure
-        secure=False,
+        secure=secure,
     )
 
 
@@ -64,12 +78,22 @@ class ResetBody(BaseModel):
 # ---- 登录 / 登出 ----
 @router.post("/login")
 def login(body: LoginBody, request: Request, response: Response):
+    ip = _client_ip(request)
+    # 防暴力破解：按 IP 与用户名双维度滑动窗口限流
+    for key, limit in ((f"login:ip:{ip}", LOGIN_MAX_PER_IP),
+                       (f"login:user:{(body.username or '').strip().lower()}", LOGIN_MAX_PER_USER)):
+        wait = rate_limiter.acquire(key, limit, LOGIN_WINDOW)
+        if wait > 0:
+            audit.write("login", method="POST", url="/api/auth/login", status=429)
+            raise HTTPException(status_code=429,
+                                detail=f"登录尝试过于频繁，请 {int(wait) + 1} 秒后再试")
     user = users.verify(body.username, body.password)
     if not user:
+        audit.write("login", method="POST", url="/api/auth/login", status=401)
         raise HTTPException(status_code=401, detail="用户名或密码错误")
-    token = users.create_session(user, ip=_client_ip(request),
-                                 ua=request.headers.get("user-agent", ""))
-    _set_session_cookie(response, token)
+    token = users.create_session(user, ip=ip, ua=request.headers.get("user-agent", ""))
+    _set_session_cookie(response, token, secure=_is_https(request))
+    audit.write("login", method="POST", url="/api/auth/login", status=200)
     return {"ok": True, "user": {"username": user["username"], "role": user.get("role", "admin")}}
 
 

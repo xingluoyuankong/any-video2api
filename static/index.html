@@ -57,14 +57,15 @@
 
       <!-- ---------- 2. 账号管理 ---------- -->
       <section class="view" id="view-accounts" data-view="accounts">
+        <!-- 渠道标签页：按平台切分账号 -->
+        <div class="ch-tabs" id="acctTabs"></div>
         <div class="toolbar">
-          <span class="label">渠道</span>
-          <select id="acctChannel" style="width:170px"><option value="">全部渠道</option></select>
+          <span class="muted" id="acctScope" style="font-size:12.5px"></span>
+          <span class="sp"></span>
           <button class="btn" id="acctCheckAll">全部检查</button>
           <button class="btn" id="acctCheckinAll">全部签到</button>
           <button class="btn" id="acctKeepaliveAll">全部保活</button>
           <button class="btn" id="acctBalanceAll">全部刷新额度</button>
-          <span class="sp"></span>
           <button class="btn ghost" id="acctRefresh">刷新</button>
           <button class="btn primary" id="acctImport">导入账号</button>
         </div>
@@ -400,19 +401,29 @@ acc_9f8e7d6c5b4a socks5://user:pass@5.6.7.8:1080"></textarea>
   </div>
 </div>
 
-<!-- 登录（账号密码） -->
-<div id="loginVeil" style="display:none;position:fixed;inset:0;z-index:9999;background:var(--bg);align-items:center;justify-content:center">
-  <div style="width:360px;max-width:92vw;background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:26px 24px;box-shadow:var(--shadow)">
-    <div style="margin-bottom:18px">
-      <div style="font-size:16px;font-weight:600;letter-spacing:-.01em">any-video2api</div>
-      <div style="font-size:12px;color:var(--ink-3);margin-top:3px">多渠道路由统一平台 · 控制台</div>
+<!-- 登录（账号密码，全屏页） -->
+<div id="loginVeil" class="login-veil">
+  <form class="login-card" id="loginForm" autocomplete="on">
+    <div class="login-brand">
+      <div class="lg">u2</div>
+      <div>
+        <div class="lg-t">any-video2api</div>
+        <div class="lg-s">多渠道路由统一平台 · 控制台</div>
+      </div>
     </div>
-    <p class="hint" id="loginMsg" style="margin:0 0 14px">请输入管理员账号密码登录。</p>
-    <label class="fld"><span>用户名</span><input id="loginUser" autocomplete="username" placeholder="admin"></label>
-    <label class="fld"><span>密码</span><input id="loginPass" type="password" autocomplete="current-password" placeholder="••••••••"></label>
-    <button class="btn primary" id="loginBtn" style="width:100%;margin-top:4px">登 录</button>
-    <p class="hint" style="margin:12px 0 0">首次部署的初始密码见服务器 <code class="mono">data/initial_admin.txt</code></p>
-  </div>
+    <div class="login-msg" id="loginMsg">请输入管理员账号密码登录。</div>
+    <label class="fld"><span>用户名</span>
+      <input id="loginUser" name="username" autocomplete="username" placeholder="admin" autofocus>
+    </label>
+    <label class="fld"><span>密码</span>
+      <div class="pw-wrap">
+        <input id="loginPass" name="password" type="password" autocomplete="current-password" placeholder="请输入密码">
+        <button type="button" class="pw-eye" id="loginEye" title="显示 / 隐藏密码" aria-label="显示密码">👁</button>
+      </div>
+    </label>
+    <button class="btn primary login-btn" id="loginBtn" type="submit">登 录</button>
+    <p class="login-foot">首次部署的初始密码见服务器 <code>data/initial_admin.txt</code></p>
+  </form>
 </div>
 
 <!-- 账号设置 -->
