@@ -18,11 +18,11 @@
 
 | 地址 | 状态 |
 |---|---|
-| **http://52-64-8-93.sslip.io/login** | ✅ 可用（控制台登录页，账号密码） |
-| **http://52-64-8-93.sslip.io/console** | ✅ 可用（登录后进入） |
-| http://52-64-8-93.sslip.io/health | ✅ 可用 |
+| **https://video.xzx-yuan.ccwu.cc/login** | ✅ **主入口**（自有域名，CF 隧道，边缘自动 HTTPS） |
+| https://video.xzx-yuan.ccwu.cc/console | ✅ 可用（登录后进入） |
+| https://video.xzx-yuan.ccwu.cc/health | ✅ 可用 |
+| http://52-64-8-93.sslip.io/login | ✅ 可用（备用，直连 HTTP） |
 | https://52-64-8-93.sslip.io | ⏳ 证书已签，待 Lightsail 防火墙开放 443 |
-| https://video.xzx-yuan.ccwu.cc | ⏳ 待 Cloudflare 面板配置（见下） |
 
 ### 控制台登录凭据
 
@@ -41,53 +41,44 @@ cat /opt/any-video2api/data/initial_admin.txt     # 查看初始密码
 
 ---
 
-## 待办：配置自有域名（Cloudflare Zero Trust 隧道）
+## 自有域名（Cloudflare 隧道）— 已配置
 
-服务器上已运行 **Cloudflare 隧道**（`cloudflared tunnel run --token ...`，remotely-managed，
-配置在 Cloudflare 面板，本地无配置文件），已有 `flow.xzx-yuan.ccwu.cc` 走同一隧道。
+`video.xzx-yuan.ccwu.cc` → Cloudflare 边缘（自动 HTTPS）→ 隧道 → `localhost:8800`。
 
-要让 `video.xzx-yuan.ccwu.cc` 指向本服务，需在 **Cloudflare Zero Trust 面板**做两步：
-
-### 1. 添加隧道 Public Hostname
-
-**方式 A：一条命令（需有效的 Cloudflare API Token）**
+**做法**（用 `cloudflared tunnel login` 授权链接，无需 API Token）：
 
 ```bash
-CF_TOKEN=<你的API_Token> ./deploy/cf-setup.sh
-# 默认配置 video.xzx-yuan.ccwu.cc -> http://localhost:8800，并自动建 DNS 记录
+# 1) 发起授权，输出一次性授权 URL
+cloudflared tunnel login
+#    浏览器打开 URL → 登录 Cloudflare → 选 zone xzx-yuan.ccwu.cc → 授权
+#    证书自动落到 ~/.cloudflared/cert.pem
+
+# 2) 新建本地管理的隧道（不影响原有 ttwz-panel）
+cloudflared tunnel create any-video2api
+#    -> id 6dbbcf1b-1627-4a32-a65e-b0e86e38c987
+#    -> 凭据 ~/.cloudflared/6dbbcf1b-1627-4a32-a65e-b0e86e38c987.json
+
+# 3) ~/.cloudflared/config.yml
+#    tunnel: 6dbbcf1b-1627-4a32-a65e-b0e86e38c987
+#    credentials-file: /home/ubuntu/.cloudflared/6dbbcf1b-....json
+#    ingress:
+#      - hostname: video.xzx-yuan.ccwu.cc
+#        service: http://localhost:8800
+#      - service: http_status:404
+
+# 4) 建 DNS（CNAME video -> <tunnel-id>.cfargotunnel.com）
+cloudflared tunnel route dns any-video2api video.xzx-yuan.ccwu.cc
+
+# 5) systemd 常驻
+sudo systemctl enable --now cloudflared-anyvideo
 ```
 
-Token 权限要求（Cloudflare → My Profile → API Tokens → Create Token → Custom token）：
-- `Account` → `Cloudflare Tunnel` → **Edit**
-- `Zone` → `DNS` → **Edit**（Zone Resources 包含 `xzx-yuan.ccwu.cc`）
-
-> 注意：要的是 **API Token**（My Profile → API Tokens），不是 Tunnel Token（`eyJ...`）
-> 也不是 Access Service Token。用错类型会报 `Invalid API Token`。
-
-**方式 B：面板手动（1 分钟）**
-
-路径：**Zero Trust → Networks → Tunnels → 选中现有隧道 → Public Hostname → Add a public hostname**
-
-| 字段 | 值 |
-|---|---|
-| Subdomain | `video` |
-| Domain | `xzx-yuan.ccwu.cc` |
-| Path | 留空 |
-| Service Type | `HTTP` |
-| Service URL | `localhost:8800` |
-
-> 也可直接指向 nginx：Service `HTTP` + `localhost:80`（此时由 nginx 按 server_name 分发）。
-
-### 2. 确认 DNS
-
-面板保存 Public Hostname 时会自动创建对应的 CNAME 记录（指向 `<tunnel-id>.cfargotunnel.com`）。
-若未自动创建，手动加一条：
-
-| Type | Name | Content | Proxy |
-|---|---|---|---|
-| CNAME | `video` | `<tunnel-id>.cfargotunnel.com` | Proxied（橙云） |
-
-完成后访问 **https://video.xzx-yuan.ccwu.cc/console** —— 走 Cloudflare 边缘，**自动 HTTPS**，无需在 Lightsail 开放 443。
+> 原有隧道 `ttwz-panel`（remotely-managed，token 启动）**未改动**；本服务用独立隧道
+> `any-video2api`，互不影响。若想复用 `ttwz-panel`，需在 Cloudflare 面板加 Public Hostname
+> （remotely-managed 的 ingress 本地改不了）。
+>
+> 备选：`deploy/cf-setup.sh`（用 API Token 追加 Public Hostname + 建 DNS），需 API Token 权限
+> `Account → Cloudflare Tunnel → Edit` + `Zone → DNS → Edit`。
 
 ### 可选：开放 443 走直连
 

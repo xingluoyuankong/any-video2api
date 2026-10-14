@@ -68,6 +68,8 @@ python -m uvicorn main:app --host 127.0.0.1 --port 8800
 
 打开控制台：<http://127.0.0.1:8800/console> · 接口文档：<http://127.0.0.1:8800/docs>
 
+> 线上实例：**https://video.xzx-yuan.ccwu.cc/login**（Cloudflare 隧道，边缘自动 HTTPS）
+
 ### 控制台登录
 
 控制台用**账号密码**登录（不是 API Key）。首次启动会自动创建管理员账号：
