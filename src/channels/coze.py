@@ -15,7 +15,7 @@ from urllib.parse import urlencode
 
 from src.channels.base import (AccountSecret, Channel, ChannelSpec, CreditView,
                                GenerateRequest, ModelSpec, PollResult, SubmitResult,
-                               VerifyResult, fingerprint_headers)
+                               VerifyResult, fingerprint_headers, sniff_account_type)
 from src.core.errors import UpstreamError, classify_error, redact
 from src.platform.transport import HttpClient
 

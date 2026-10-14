@@ -14,7 +14,8 @@ from typing import Any, Dict, List, Optional
 
 from src.channels.base import (AccountSecret, AssetRef, Channel, ChannelSpec, CreditView,
                                GenerateRequest, ModelSpec, PollResult, SubmitResult,
-                               VerifyResult, fingerprint_headers, norm_status)
+                               VerifyResult, fingerprint_headers, norm_status,
+                               sniff_account_type)
 from src.core.errors import UpstreamError, classify_error, find_values, redact
 from src.platform.transport import HttpClient
 
