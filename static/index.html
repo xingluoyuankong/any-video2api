@@ -233,7 +233,7 @@
         <button data-imp-tab="file">上传文件</button>
         <button data-imp-tab="sms">手机号登录</button>
         <button data-imp-tab="pwd">账密登录</button>
-        <button data-imp-tab="oauth">授权链接</button>
+        <button data-imp-tab="oauth">Cookie 回传</button>
       </div>
       <div id="impPane-paste">
         <label class="field"><span>Cookie（JSON）</span>
@@ -262,7 +262,7 @@
         <label class="field"><span>密码</span><input type="password" id="impLoginPass" autocomplete="off"></label>
       </div>
       <div id="impPane-oauth" class="hidden">
-        <div class="notice" id="impOauthNote" style="margin-bottom:12px">选择渠道后自动生成授权链接与书签脚本，用【无痕窗口】打开官网登录后回传 Cookie（不影响本地浏览器账号）。</div>
+        <div class="notice" id="impOauthNote" style="margin-bottom:12px">本方式不是 OAuth：需用【无痕窗口】登录官网，再执行书签脚本把 Cookie 回传（不影响本地浏览器账号）。</div>
         <div id="impOauthOut" style="margin-top:12px"></div>
       </div>
       <div class="inline" style="gap:12px">

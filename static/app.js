@@ -930,7 +930,7 @@ function switchImpTab(tab) {
   const meta = state.channels.find(c => c.name === ch) || {};
   const methods = (meta.capabilities && meta.capabilities.login_methods) || [];
   const noteId = { sms: 'impSmsNote', pwd: 'impPwdNote', oauth: 'impOauthNote' }[tab];
-  const label = { sms: '手机号+短信', pwd: '账密', oauth: '授权链接' }[tab];
+  const label = { sms: '手机号+短信', pwd: '账密', oauth: 'Cookie 回传' }[tab];
   if (noteId && $('#' + noteId)) {
     const el = $('#' + noteId);
     if (methods.length && methods.indexOf(tab) < 0) {
@@ -940,7 +940,7 @@ function switchImpTab(tab) {
       el.className = 'notice';
     }
   }
-  // 切到授权链接 tab 时自动列出各渠道官网登录链接
+  // 切到 Cookie 回传 tab 时自动生成当前渠道的书签脚本
   if (tab === 'oauth' && $('#impOauthOut')) startOauth();
 }
 
@@ -1007,7 +1007,7 @@ async function updateChannelLogin() {
     '</div></div>';
 }
 
-/* 生成授权链接 / 书签脚本（OAuth 方式）—— 只渲染当前选中渠道 */
+/* Cookie 回传（书签方式，非 OAuth）—— 只渲染当前选中渠道 */
 async function startOauth() {
   const out = $('#impOauthOut');
   const cur = $('#impChannel').value;
@@ -1127,7 +1127,7 @@ async function submitImport() {
     else toast('登录失败：' + r.error, 'bad');
     return;
   }
-  if (impTab === 'oauth') { toast('请先点「生成授权链接」，再按提示回传 Cookie', 'warn'); return; }
+  if (impTab === 'oauth') { toast('请复制上方书签脚本，在官网页面执行后回传 Cookie', 'warn'); return; }
 
   const raw = $('#impCookies').value.trim();
   let cookies = {};
