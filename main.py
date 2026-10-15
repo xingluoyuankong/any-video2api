@@ -248,12 +248,21 @@ def media(bucket: str, name: str):
 @app.get("/login", response_class=HTMLResponse)
 @app.get("/console", response_class=HTMLResponse)
 def console():
-    """返回控制台页面（登录页与主界面同一入口，前端按登录态切换）。"""
+    """返回控制台页面（登录页与主界面同一入口，前端按登录态切换）。
+
+    必须禁用缓存：index.html 里引用的 app.js/style.css 带 ?v= 版本号，
+    若浏览器缓存了旧的 index.html，就会一直加载旧版 JS，改了前端也看不到效果。
+    """
+    nocache = {
+        "Cache-Control": "no-cache, no-store, must-revalidate",
+        "Pragma": "no-cache",
+        "Expires": "0",
+    }
     for name in ("index.html", "console.html"):
         page = STATIC_DIR / name
         if page.exists():
-            return page.read_text(encoding="utf-8")
-    return HTMLResponse("<h1>any-video2api</h1><p>前端未生成</p>")
+            return HTMLResponse(page.read_text(encoding="utf-8"), headers=nocache)
+    return HTMLResponse("<h1>any-video2api</h1><p>前端未生成</p>", headers=nocache)
 
 
 MEDIA_DIR.mkdir(parents=True, exist_ok=True)

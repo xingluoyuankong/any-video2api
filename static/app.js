@@ -1063,14 +1063,20 @@ function applyImpTabs() {
   if (supported.indexOf(impTab) < 0) switchImpTab(supported[0] || 'paste');
 }
 
-function openImport() {
+function openImport(channel) {
   if (!state.channels.length) { toast('渠道未加载，请先配置密钥', 'warn'); return; }
   $('#impName').value = '';
   $('#impCookies').value = '';
   $('#impFile').value = '';
   $('#impProxy').value = '';
   $('#impNote').value = '';
-  if (!$('#impChannel').value) $('#impChannel').value = state.channels[0].name;
+  // 优先用传入的渠道（来自当前账号管理标签），否则用上次选的，再否则第一个
+  const want = channel || state.acctChannel || '';
+  if (want && state.channels.some(c => c.name === want)) {
+    $('#impChannel').value = want;
+  } else if (!$('#impChannel').value) {
+    $('#impChannel').value = state.channels[0].name;
+  }
   applyImpTabs();
   switchImpTab('paste');
   refreshChannelLogin();
@@ -2120,7 +2126,7 @@ async function handleAction(act, el) {
       catch (_) { toast('复制失败，请手动选择', 'warn'); }
       break;
     }
-    case 'import-open': openImport(); break;
+    case 'import-open': openImport(state.acctChannel); break;
     case 'acct-tab': {
       state.acctChannel = el.dataset.ch || '';
       $$('#acctTabs .ch-tab').forEach(b => b.classList.toggle('active', (b.dataset.ch || '') === state.acctChannel));
