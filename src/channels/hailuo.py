@@ -127,18 +127,41 @@ class HailuoChannel(Channel):
 
     # ---- 登录态校验 -----------------------------------------------------
     def verify(self, secret: AccountSecret) -> VerifyResult:
-        """GET /v1/api/billing/credit —— 能读到额度即证明登录态有效。
+        """两段式：/v1/api/user/subscription（账号类型）→ 兜底 /v1/api/billing/credit。
 
         判定口径（保守，避免保活误杀）：
-          * 无 token            -> invalid，**不发请求**
-          * HTTP 401 / 未登录   -> invalid（凭据确实失效）
-          * 网络 / 超时 / 限流  -> risk
-          * 其它未知（含上游通用错误、空数据）-> risk
+         * 无 token            -> invalid，**不发请求**
+         * HTTP 401 / 未登录   -> invalid（凭据确实失效）
+         * 网络 / 超时 / 限流  -> risk
+         * 其它未知            -> risk
         """
         token = self._token_of(secret)
         if not token:
             return VerifyResult(ok=False, status="invalid",
                                 message="缺少凭据：需要海螺 token（短信登录，或官网 Cookie 里的 _token）")
+        # 第一段：subscription（顺带拿 free/会员）
+        try:
+            sub = self._get("/v1/api/user/subscription", token=token)
+            if isinstance(sub, dict):
+                atype = "free" if sub.get("isFree") else ("member" if sub.get("subscription") else "")
+                # 再查 equity 拿额度数字（失败不影响校验结果）
+                credit_txt = ""
+                try:
+                    eq = self._get("/v1/api/user/equity", token=token)
+                    if isinstance(eq, dict) and eq.get("totalCredits") is not None:
+                        credit_txt = "，贝壳额度 %s" % eq.get("totalCredits")
+                except Exception:  # noqa: BLE001
+                    pass
+                return VerifyResult(ok=True, status="active", account_type=atype,
+                                    message="登录态有效%s" % credit_txt,
+                                    raw=redact(sub))
+        except Exception as exc:  # noqa: BLE001
+            s = str(exc)
+            if "401" in s or "未登录" in s or "login" in s.lower() or "失效" in s:
+                return VerifyResult(ok=False, status="invalid",
+                                    message="登录态已失效：%s" % s)
+            self._warn("海螺 verify(subscription) 失败，转 billing/credit 兜底: %s", exc)
+        # 第二段兜底：billing/credit
         try:
             data = self._get("/v1/api/billing/credit", token=token)
         except Exception as exc:  # noqa: BLE001
@@ -147,26 +170,16 @@ class HailuoChannel(Channel):
         if not isinstance(data, dict) or not data:
             return VerifyResult(ok=False, status="risk",
                                 message="海螺额度接口未返回数据，暂不判定失效")
-        total = data.get("total_credit")
-        try:
-            total_txt = "%g" % float(total or 0)
-        except (TypeError, ValueError):
-            total_txt = str(total)
-        self._info("海螺 verify 通过，total_credit=%s", total_txt)
         return VerifyResult(ok=True, status="active",
-                            message=f"登录态有效，贝壳额度 {total_txt}",
+                            message="登录态有效",
                             account_type=sniff_account_type(data),
                             raw=redact(data) if isinstance(data, dict) else {})
 
     def credits(self, secret: AccountSecret) -> CreditView:
-        """GET /v1/api/billing/credit -> {total_credit, sub_credits:[...]}（贝壳）。"""
+        """多接口聚合额度：equity（总览）+ subscription（free/付费）+ user/info（VIP）。"""
         token = self._token_of(secret)
         if not token:
             return CreditView(error="缺少凭据：需要 _token（短信登录或官网 Cookie 导入）")
-        try:
-            data = self._get("/v1/api/billing/credit", token=token)
-        except Exception as e:  # noqa: BLE001
-            return CreditView(error=str(e))
 
         def num(x: Any) -> float:
             try:
@@ -174,17 +187,78 @@ class HailuoChannel(Channel):
             except Exception:  # noqa: BLE001
                 return 0.0
 
-        total = num(data.get("total_credit"))
+        total = 0.0
         buckets: Dict[str, float] = {}
-        for i, sub in enumerate(data.get("sub_credits") or []):
-            if not isinstance(sub, dict):
-                continue
-            name = str(sub.get("type") or sub.get("name") or ("sub_%d" % i))
-            val = num(sub.get("credit") or sub.get("credit_amount")
-                      or sub.get("amount") or sub.get("value"))
-            buckets[name] = val
-        view = CreditView(total=total, allocatable=total, buckets=buckets, raw=data)
-        view.message = "来源: GET /v1/api/billing/credit（贝壳=可用数）"
+        notes: List[str] = []
+        atype = ""
+
+        # --- 权益接口：总览额度 + 会员等级 + 新用户试用 ---
+        try:
+            eq = self._get("/v1/api/user/equity", token=token)
+            if isinstance(eq, dict):
+                total = num(eq.get("totalCredits"))
+                if eq.get("videoCost"):
+                    buckets["videoCost"] = num(eq.get("videoCost"))
+                if eq.get("queueLength"):
+                    buckets["queueLength"] = num(eq.get("queueLength"))
+                mn = str(eq.get("memberName") or "")
+                if mn and mn.lower() not in ("free", ""):
+                    notes.append("会员等级: %s" % mn)
+                    atype = "member"
+                elif mn.lower() == "free":
+                    notes.append("会员等级: Free")
+                    atype = "free" if not atype else atype
+                if eq.get("isNewUser"):
+                    notes.append("新用户")
+                if eq.get("trialText"):
+                    notes.append("试用: %s" % eq.get("trialText"))
+                if eq.get("memberText"):
+                    notes.append(str(eq.get("memberText")))
+        except Exception as e:  # noqa: BLE001
+            notes.append("equity 查询失败: %s" % str(e)[:60])
+
+        # --- 订阅接口：确认 free / 付费 ---
+        try:
+            sub = self._get("/v1/api/user/subscription", token=token)
+            if isinstance(sub, dict):
+                if sub.get("isFree"):
+                    atype = atype or "free"
+                elif sub.get("subscription"):
+                    atype = atype or "member"
+                if not total:
+                    total = num(sub.get("credit"))
+        except Exception:  # noqa: BLE001
+            pass
+
+        # --- 用户信息接口：VIP 标识兜底 ---
+        try:
+            info = self._get("/v1/api/user/info", token=token)
+            ui = (info or {}).get("userInfo") or {}
+            vip = ui.get("vipInfo") or {}
+            if num(vip.get("type")) > 0:
+                atype = "vip"
+            if ui.get("name"):
+                notes.append("账号: %s" % ui.get("name"))
+        except Exception:  # noqa: BLE001
+            pass
+
+        # --- 旧贝壳接口兜底（equity 拿不到数时）---
+        if not total:
+            try:
+                cr = self._get("/v1/api/billing/credit", token=token)
+                if isinstance(cr, dict):
+                    total = num(cr.get("total_credit"))
+                    for i, sub2 in enumerate(cr.get("sub_credits") or []):
+                        if isinstance(sub2, dict):
+                            buckets[str(sub2.get("type") or "sub_%d" % i)] = num(
+                                sub2.get("credit") or sub2.get("amount"))
+            except Exception:  # noqa: BLE001
+                pass
+
+        view = CreditView(total=total, allocatable=total, buckets=buckets,
+                          account_type=atype,
+                          message="; ".join(notes)[:250],
+                          raw={"total": total, "account_type": atype})
         return view
 
     # ---- 海螺业务结构解析（statusInfo）----------------------------------

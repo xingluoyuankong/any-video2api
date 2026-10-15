@@ -182,6 +182,7 @@ class CreditView:
     buckets: Dict[str, float] = field(default_factory=dict)
     error: str = ""
     message: str = ""
+    account_type: str = ""          # free | member | vip | ""
     raw: Dict[str, Any] = field(default_factory=dict)
 
 

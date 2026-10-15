@@ -175,11 +175,27 @@ class KlingChannel(Channel):
     def login_methods(self) -> List[str]:
         return ["sms", "pwd"]
 
+    def _passport_session(self) -> requests.Session:
+        """预热 session：必须先访问站点拿 passport 需要的 cookie（did 等）。
+
+        实测教训：裸 requests.post 发码会被快手判 「请输入有效的手机号」
+        （错误码 100110011）——任何号段都一样，真实原因是缺 session cookie。
+        """
+        s = requests.Session()
+        s.headers.update(self._headers())
+        for url in ("https://klingai.com/", "https://klingai.com/app/", PASSPORT + "/"):
+            try:
+                s.get(url, timeout=15, verify=False)
+            except Exception:  # noqa: BLE001
+                pass
+        return s
+
     def login_send_sms(self, phone: str, area_code: str = "86") -> Dict[str, Any]:
         """发送快手 passport 短信验证码（会真实下发短信）。"""
-        r = requests.post(PASSPORT + "/pass/kuaishou/sms/requestMobileCode",
-                          data={"mobile": phone, "sid": SID, "type": 1},
-                          headers=self._headers(), timeout=20, verify=False)
+        s = self._passport_session()
+        r = s.post(PASSPORT + "/pass/kuaishou/sms/requestMobileCode",
+                   data={"mobile": phone, "sid": SID, "type": 1},
+                   headers=self._headers(), timeout=20, verify=False)
         j = r.json() if r.content else {}
         if j.get("error_msg"):
             raise RuntimeError(j["error_msg"])
