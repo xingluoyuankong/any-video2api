@@ -173,7 +173,9 @@ class KlingChannel(Channel):
 
     # ---- 在线登录 -------------------------------------------------------
     def login_methods(self) -> List[str]:
-        return ["sms", "pwd"]
+        # sms/pwd = 纯协议（id.kuaishou.com，实测被风控 100110011，基本不可用）
+        # oauth   = 浏览器登录后回传 klingai.com Cookie（含 kuaishou.ai.portal_st），实际可用
+        return ["sms", "pwd", "oauth"]
 
     def _passport_session(self) -> requests.Session:
         """预热 session：必须先访问站点拿 passport 需要的 cookie（did 等）。
