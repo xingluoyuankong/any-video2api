@@ -21,7 +21,9 @@ from typing import Any, Dict, List, Optional
 import requests
 import urllib3
 
-from .base import AccountSecret, Channel, ChannelSpec, CreditView
+from .base import (AccountSecret, Channel, ChannelSpec, CreditView, VerifyResult,
+                   sniff_account_type, verify_from_exception)
+from src.core.errors import redact
 
 urllib3.disable_warnings()
 
@@ -120,6 +122,39 @@ class HailuoChannel(Channel):
         if not secret:
             return ""
         return str(secret.extra.get("token") or secret.cookies.get("_token") or "")
+
+    # ---- 登录态校验 -----------------------------------------------------
+    def verify(self, secret: AccountSecret) -> VerifyResult:
+        """GET /v1/api/billing/credit —— 能读到额度即证明登录态有效。
+
+        判定口径（保守，避免保活误杀）：
+          * 无 token            -> invalid，**不发请求**
+          * HTTP 401 / 未登录   -> invalid（凭据确实失效）
+          * 网络 / 超时 / 限流  -> risk
+          * 其它未知（含上游通用错误、空数据）-> risk
+        """
+        token = self._token_of(secret)
+        if not token:
+            return VerifyResult(ok=False, status="invalid",
+                                message="缺少凭据：需要海螺 token（短信登录，或官网 Cookie 里的 _token）")
+        try:
+            data = self._get("/v1/api/billing/credit", token=token)
+        except Exception as exc:  # noqa: BLE001
+            self._warn("海螺 verify 失败: %s", exc, exc_info=True)
+            return verify_from_exception(exc, what="海螺")
+        if not isinstance(data, dict) or not data:
+            return VerifyResult(ok=False, status="risk",
+                                message="海螺额度接口未返回数据，暂不判定失效")
+        total = data.get("total_credit")
+        try:
+            total_txt = "%g" % float(total or 0)
+        except (TypeError, ValueError):
+            total_txt = str(total)
+        self._info("海螺 verify 通过，total_credit=%s", total_txt)
+        return VerifyResult(ok=True, status="active",
+                            message=f"登录态有效，贝壳额度 {total_txt}",
+                            account_type=sniff_account_type(data),
+                            raw=redact(data) if isinstance(data, dict) else {})
 
     def credits(self, secret: AccountSecret) -> CreditView:
         """GET /v1/api/billing/credit -> {total_credit, sub_credits:[...]}（贝壳）。"""

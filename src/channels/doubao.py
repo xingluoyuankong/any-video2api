@@ -229,22 +229,30 @@ class DoubaoChannel(Channel):
             params = self._security_params(secret, include_fp=True)
             raw = self._sse_post(secret, "submit", body, params=params,
                                  timeout=min(self.spec.timeout, 60))
-            task_id = self._extract_task_id(raw)
+            parse_errors: List[Dict[str, str]] = []
+            task_id = self._extract_task_id(raw, errors=parse_errors)
+            evidence = self._evidence(parse_errors, raw)
             if task_id:
-                return SubmitResult(upstream_task_id=task_id, transport="requests",
-                                    raw={"sse_len": len(raw)})
-            err = self._extract_error(raw)
+                return SubmitResult(upstream_task_id=task_id, transport="requests", raw=evidence)
+            err = self._extract_error(raw, errors=parse_errors)
             if err:
                 return SubmitResult(accepted=False, error=err[0], error_class=err[1],
-                                    raw={"sse": redact(raw[:1000])})
+                                    raw={**evidence, "sse": redact(raw[:1000])})
+            self._warn("豆包提交未拿到 async_task.id，且 SSE 里也没有错误字段"
+                       "（sse_len=%d，解析失败 %d 块）", len(raw), len(parse_errors))
             return SubmitResult(
                 accepted=False, error_class="upstream",
                 error="豆包未返回 async_task.id（可能登录态失效或响应格式变化）",
-                raw={"sse": redact(raw[:1000])})
+                raw={**evidence, "sse": redact(raw[:1000])})
         except UpstreamError as e:
+            self._warn("豆包提交被上游拒绝: %s", e)
             return SubmitResult(accepted=False, error=str(e), error_class=e.error_class)
         except Exception as e:  # 兜底：绝不把异常抛到平台层
-            return SubmitResult(accepted=False, error=f"{type(e).__name__}: {e}",
+            # 走到这里 = 非预期异常（程序 bug / 序列化问题），必须留堆栈，
+            # 否则只会看到任务"提交失败"四个字，无从排查。
+            self._warn("豆包提交异常（非 UpstreamError，疑似程序 bug）: %s", e, exc_info=True)
+            return SubmitResult(accepted=False,
+                                error=f"豆包提交内部异常：{type(e).__name__}: {e}",
                                 error_class="upstream")
 
     # ---- 生成：轮询 ----------------------------------------------------------
@@ -259,15 +267,55 @@ class DoubaoChannel(Channel):
             raw = self._sse_post(secret, "poll", body, params=params)
             return self._parse_poll(raw)
         except UpstreamError as e:
+            self._warn("豆包轮询被上游拒绝 task_id=%s: %s", upstream_task_id, e)
             return PollResult(status="failed", error=str(e), error_class=e.error_class)
         except Exception as e:
-            return PollResult(status="failed", error=f"{type(e).__name__}: {e}",
+            # 非预期异常：留堆栈。此前这里只回 ``TypeError: xxx`` 之类，
+            # 看不到是哪一步炸的，也无法区分"上游问题"和"我们自己的 bug"。
+            self._warn("豆包轮询异常（非 UpstreamError，疑似程序 bug）task_id=%s: %s",
+                       upstream_task_id, e, exc_info=True)
+            return PollResult(status="failed",
+                              error=f"豆包轮询内部异常：{type(e).__name__}: {e}",
                               error_class="upstream")
 
     # ---- SSE 解析辅助 --------------------------------------------------------
+    #
+    # 豆包的 SSE 是"上游想改就改"的弱契约：某个 data 块不是合法 JSON 是常态
+    # （心跳、分片、协议升级）。历史上这里一律 ``except Exception: continue``，
+    # 结果任务静默停在 processing，日志一行没有。现在的统一口径是：
+    #   **解析失败仍然降级（不抛异常、不让任务直接失败），但必须留日志 + 留证据**；
+    #   证据（原始片段脱敏后截断 500 字符）通过 errors 列表回流到
+    #   PollResult.raw / SubmitResult.raw，控制台能直接看到卡在哪一块。
     @staticmethod
-    def _iter_sse_data(raw: str):
-        """逐块产出 SSE 的 data 行反序列化后的对象。"""
+    def _evidence(parse_errors: List[Dict[str, str]], sse: str = "") -> Dict[str, Any]:
+        """把 SSE 解析失败证据整理成可落库的 raw（脱敏 + 截断）。"""
+        out: Dict[str, Any] = {"sse_len": len(sse)} if sse else {}
+        if not parse_errors:
+            return out
+        first = parse_errors[0]
+        out["parse_error"] = first.get("parse_error", "")
+        out["raw_text"] = first.get("raw_text", "")
+        out["parse_error_count"] = len(parse_errors)
+        out["parse_errors"] = parse_errors[:5]
+        return out
+
+    @staticmethod
+    def _record(parse_errors: Optional[List[Dict[str, str]]], exc: BaseException,
+                snippet: Any) -> None:
+        """记录一次解析失败（脱敏 + 截断 500，避免把整条 SSE / token 落库）。"""
+        if parse_errors is None:
+            return
+        parse_errors.append({
+            "parse_error": f"{type(exc).__name__}: {exc}"[:300],
+            "raw_text": str(redact(str(snippet)[:500])),
+        })
+
+    def _iter_sse_data(self, raw: str,
+                       errors: Optional[List[Dict[str, str]]] = None):
+        """逐块产出 SSE 的 data 行反序列化后的对象。
+
+        errors 传入时，解析失败的原始片段会写进去，供上层落 raw 作证据。
+        """
         for block in raw.split("\n\n"):
             data_str = ""
             for line in block.strip().split("\n"):
@@ -277,20 +325,24 @@ class DoubaoChannel(Channel):
                 continue
             try:
                 yield json.loads(data_str)
-            except Exception:
+            except Exception as exc:
+                self._warn("SSE 解析失败: %s", exc, exc_info=True)
+                self._record(errors, exc, data_str)
                 continue
 
-    @staticmethod
-    def _extract_task_id(raw: str) -> str:
+    def _extract_task_id(self, raw: str,
+                         errors: Optional[List[Dict[str, str]]] = None) -> str:
         """从提交响应的 SSE 中提取 fin_reason.async_task.id。"""
-        for data in DoubaoChannel._iter_sse_data(raw):
+        for data in self._iter_sse_data(raw, errors=errors):
             if not isinstance(data, dict) or data.get("event_type") != CT_EVENT_MSG:
                 continue
             ed = data.get("event_data")
             if isinstance(ed, str):
                 try:
                     ed = json.loads(ed)
-                except Exception:
+                except Exception as exc:
+                    self._warn("SSE 解析失败: %s", exc, exc_info=True)
+                    self._record(errors, exc, ed)
                     continue
             if not isinstance(ed, dict):
                 continue
@@ -301,8 +353,8 @@ class DoubaoChannel(Channel):
                     return str(tid)
         return ""
 
-    @staticmethod
-    def _extract_error(raw: str) -> Optional[Tuple[str, str]]:
+    def _extract_error(self, raw: str,
+                       errors: Optional[List[Dict[str, str]]] = None) -> Optional[Tuple[str, str]]:
         """从 SSE / 顶层 JSON 中提取错误信息 -> (message, error_class)。"""
         # 1) gateway-error 事件
         for block in raw.split("\n\n"):
@@ -315,13 +367,17 @@ class DoubaoChannel(Channel):
             if ev == "gateway-error" and data_str:
                 try:
                     obj = json.loads(data_str)
-                except Exception:
+                except Exception as exc:
+                    # 解析失败仍继续用原文兜底提取 code/message，但必须留日志，
+                    # 否则"gateway-error 且取不到 code"会变成无声的空错误。
+                    self._warn("SSE 解析失败: %s", exc, exc_info=True)
+                    self._record(errors, exc, data_str)
                     obj = {}
                 code = obj.get("code")
                 msg = str(obj.get("message") or data_str)
                 return (f"gateway-error code={code} {msg}"[:300], _classify(code, msg))
         # 2) SSE 内 error_code / ERR 事件
-        for data in DoubaoChannel._iter_sse_data(raw):
+        for data in self._iter_sse_data(raw, errors=errors):
             if not isinstance(data, dict):
                 continue
             if data.get("event_type") == CT_EVENT_ERR:
@@ -335,7 +391,9 @@ class DoubaoChannel(Channel):
         if s.startswith("{"):
             try:
                 obj = json.loads(raw)
-            except Exception:
+            except Exception as exc:
+                self._warn("SSE 解析失败: %s", exc, exc_info=True)
+                self._record(errors, exc, raw)
                 obj = None
             if isinstance(obj, dict):
                 code = obj.get("code") or obj.get("error_code")
@@ -344,15 +402,17 @@ class DoubaoChannel(Channel):
                     return (f"code={code} {msg}"[:300], _classify(code, msg))
         return None
 
-    @staticmethod
-    def _decode_video_model(vm: Any) -> str:
+    def _decode_video_model(self, vm: Any,
+                            errors: Optional[List[Dict[str, str]]] = None) -> str:
         """video_model.video_list.*.main_url 是 base64 编码的直链。"""
         if not vm:
             return ""
         if isinstance(vm, str):
             try:
                 vm = json.loads(vm)
-            except Exception:
+            except Exception as exc:
+                self._warn("SSE 解析失败: %s", exc, exc_info=True)
+                self._record(errors, exc, vm)
                 return ""
         if not isinstance(vm, dict):
             return ""
@@ -362,7 +422,11 @@ class DoubaoChannel(Channel):
                 if isinstance(vinfo, dict) and vinfo.get("main_url"):
                     try:
                         return base64.b64decode(vinfo["main_url"]).decode("utf-8", "replace")
-                    except Exception:
+                    except Exception as exc:
+                        # 解码失败 = 拿不到直链，任务会表现为"长时间 processing"，
+                        # 必须留证据：到底是非 base64 还是编码变了。
+                        self._warn("SSE 解析失败: %s", exc, exc_info=True)
+                        self._record(errors, exc, vinfo.get("main_url"))
                         return ""
         return ""
 
@@ -371,7 +435,8 @@ class DoubaoChannel(Channel):
         covers: List[str] = []
         err = ""
         err_class = ""
-        for data in self._iter_sse_data(raw):
+        parse_errors: List[Dict[str, str]] = []
+        for data in self._iter_sse_data(raw, errors=parse_errors):
             if not isinstance(data, dict):
                 continue
             et = data.get("event_type")
@@ -385,7 +450,9 @@ class DoubaoChannel(Channel):
             if isinstance(ed, str):
                 try:
                     ed = json.loads(ed)
-                except Exception:
+                except Exception as exc:
+                    self._warn("SSE 解析失败: %s", exc, exc_info=True)
+                    self._record(parse_errors, exc, ed)
                     continue
             if not isinstance(ed, dict):
                 continue
@@ -396,7 +463,9 @@ class DoubaoChannel(Channel):
             if isinstance(content, str):
                 try:
                     content = json.loads(content)
-                except Exception:
+                except Exception as exc:
+                    self._warn("SSE 解析失败: %s", exc, exc_info=True)
+                    self._record(parse_errors, exc, content)
                     content = {}
             if not isinstance(content, dict):
                 content = {}
@@ -405,7 +474,7 @@ class DoubaoChannel(Channel):
                     continue
                 url = item.get("video_url") or item.get("url") or ""
                 if not url:
-                    url = self._decode_video_model(item.get("video_model"))
+                    url = self._decode_video_model(item.get("video_model"), errors=parse_errors)
                 if url:
                     media.append(url)
                 cover = item.get("cover_url") or (item.get("cover") or {}).get("url") or ""
@@ -413,13 +482,19 @@ class DoubaoChannel(Channel):
                     covers.append(cover)
         media = list(dict.fromkeys(media))
         covers = list(dict.fromkeys(covers))
+        evidence = self._evidence(parse_errors, raw)
         if media:
             return PollResult(status="success", media=media, covers=covers, progress=1.0,
-                              raw={"sse_len": len(raw)})
+                              raw=evidence)
         if err:
             return PollResult(status="failed", error=err, error_class=err_class or "upstream",
-                              raw={"sse_len": len(raw)})
-        return PollResult(status="processing", raw={"sse_len": len(raw)})
+                              raw=evidence)
+        if parse_errors:
+            # 降级点：既没媒体也没错误，但确实有块没解析出来 —— 以前这里完全无声，
+            # 任务就一直转 processing。现在至少让"降级"这件事在日志里可见。
+            self._warn("豆包轮询降级为 processing：无媒体、无错误字段，但有 %d 个 SSE 块解析失败"
+                       "（证据已写入 PollResult.raw）", len(parse_errors))
+        return PollResult(status="processing", raw=evidence)
 
     # ---- 错误归一化 ----------------------------------------------------------
     def classify_error(self, payload: Any) -> str:

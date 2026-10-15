@@ -16,7 +16,8 @@ from typing import Any, Dict, List, Optional
 import requests
 import urllib3
 
-from .base import AccountSecret, Channel, ChannelSpec, CreditView
+from .base import (AccountSecret, Channel, ChannelSpec, CreditView, VerifyResult,
+                   looks_login_expired, sniff_account_type, verify_from_exception)
 
 urllib3.disable_warnings()
 
@@ -43,12 +44,84 @@ class KlingChannel(Channel):
     # ---- 额度 -----------------------------------------------------------
     KLING_BASE = "https://klingai.com"
 
-    def credits(self, secret: AccountSecret) -> CreditView:
-        """GET /api/account/pointAndTicket -> 积分/券余额（网页版 Cookie 鉴权）。"""
+    # ---- 凭据 / 登录态 --------------------------------------------------
+    @staticmethod
+    def _cookie_of(secret: Optional[AccountSecret]) -> str:
+        """Cookie 串：优先 extra['cookie']，否则拼接 cookies 字典。"""
         if not secret:
-            return CreditView(error="缺少凭据：需要 klingai.com Cookie（含 kuaishou.ai.portal_st）")
-        cookie = str(secret.extra.get("cookie") or "") or \
-            "; ".join(f"{k}={v}" for k, v in (secret.cookies or {}).items())
+            return ""
+        return (str(secret.extra.get("cookie") or "") or
+                "; ".join(f"{k}={v}" for k, v in (secret.cookies or {}).items()))
+
+    def _point_headers(self, cookie: str) -> Dict[str, str]:
+        return {
+            "User-Agent": UA,
+            "Referer": self.KLING_BASE + "/app/",
+            "Origin": self.KLING_BASE,
+            "Accept": "application/json, text/plain, */*",
+            "Accept-Language": "zh-CN,zh;q=0.9",
+            "Content-Type": "application/json",
+            "Cookie": cookie,
+        }
+
+    def verify(self, secret: AccountSecret) -> VerifyResult:
+        """GET /api/account/pointAndTicket —— Cookie 鉴权探测登录态。
+
+        实测（空 Cookie / 伪造 Cookie / 伪造 token 均一致）：上游返回
+        HTTP 200 + ``{"status":500,"result":1,"data":null,"error":{"brief":"服务开小差了…"}}``。
+        该响应「未登录」与「上游临时故障」**同形**，无法区分，因此按保守口径
+        判 **risk** 而不是 invalid——保活任务不会因一次上游抖动误杀账号。
+        只有 HTTP 401/403，或信封里出现明确的未登录字样，才判 invalid。
+        """
+        cookie = self._cookie_of(secret)
+        if not cookie:
+            return VerifyResult(ok=False, status="invalid",
+                                message="缺少凭据：需要 klingai.com Cookie（含 kuaishou.ai.portal_st）")
+        try:
+            resp = requests.get(self.KLING_BASE + "/api/account/pointAndTicket",
+                                headers=self._point_headers(cookie), timeout=30, verify=False)
+        except Exception as exc:  # noqa: BLE001
+            self._warn("可灵 verify 异常: %s", exc, exc_info=True)
+            return verify_from_exception(exc, what="可灵")
+        if resp.status_code in (401, 403):
+            return VerifyResult(ok=False, status="invalid",
+                                message="可灵登录态已失效（上游返回未授权），请重新登录导入 Cookie",
+                                raw={"http_status": resp.status_code})
+        if resp.status_code == 429 or resp.status_code >= 500:
+            return VerifyResult(ok=False, status="risk",
+                                message=f"可灵上游限流或服务异常（HTTP {resp.status_code}），暂不判定失效",
+                                raw={"http_status": resp.status_code})
+        try:
+            body = resp.json() if resp.content else {}
+        except ValueError:
+            return VerifyResult(ok=False, status="risk",
+                                message="可灵上游返回非 JSON（疑似风控拦截页），暂不判定失效",
+                                raw={"_raw": resp.text[:300]})
+        if not isinstance(body, dict):
+            return VerifyResult(ok=False, status="risk",
+                                message="可灵上游返回格式异常，暂不判定失效")
+        err = body.get("error") or {}
+        err_txt = " ".join(str(x) for x in (err.get("brief"), err.get("detail"),
+                                            err.get("type"), body.get("message")) if x)
+        if looks_login_expired(err_txt):
+            return VerifyResult(ok=False, status="invalid",
+                                message="可灵登录态已失效，请重新登录导入 Cookie", raw=body)
+        data = body.get("data")
+        if body.get("status") in (200, 0) and isinstance(data, dict) and data:
+            try:
+                points_txt = "%g" % float(data.get("points") or 0)
+            except (TypeError, ValueError):
+                points_txt = str(data.get("points"))
+            self._info("可灵 verify 通过，points=%s", points_txt)
+            return VerifyResult(ok=True, status="active",
+                                message=f"登录态有效，积分余额 {points_txt}",
+                                account_type=sniff_account_type(body), raw=body)
+        # 信封非 200 / data 为空：可能是未登录，也可能是上游抽风 —— 一律 risk
+        self._warn("可灵 verify 无法判定：status=%s data=%s err=%s",
+                   body.get("status"), type(data).__name__, err_txt[:120])
+        return VerifyResult(ok=False, status="risk",
+                            message="可灵上游返回通用错误（未登录或上游异常均如此），暂不判定失效",
+                            raw=body)
         if not cookie:
             return CreditView(error="缺少凭据：需要 klingai.com Cookie（含 kuaishou.ai.portal_st）")
         headers = {

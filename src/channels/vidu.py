@@ -19,7 +19,8 @@ import requests
 import urllib3
 from requests.adapters import HTTPAdapter
 
-from .base import AccountSecret, Channel, ChannelSpec, CreditView
+from .base import (AccountSecret, Channel, ChannelSpec, CreditView,
+                   VerifyResult, sniff_account_type)
 
 urllib3.disable_warnings()
 
@@ -139,6 +140,45 @@ class ViduChannel(Channel):
         if secret.extra.get("cookie"):
             return str(secret.extra["cookie"])
         return "; ".join(f"{k}={v}" for k, v in (secret.cookies or {}).items())
+
+    def verify(self, secret: AccountSecret) -> VerifyResult:
+        """GET /credit/v1/credits/me —— Cookie 鉴权探测登录态。
+
+        必须 TLS1.3-only 指纹（绕 EdgeOne）。
+        判定口径（保守，避免保活误杀）：
+          * 无 cookie          -> invalid，不发请求
+          * HTTP 401 / 403     -> invalid（凭据确实失效）
+          * 网络 / 超时 / 5xx / 429 -> risk（不降级，防止一次抖动误杀）
+          * 其它未知           -> risk
+        """
+        cookie = self._cookie_of(secret)
+        if not cookie:
+            return VerifyResult(ok=False, status="invalid",
+                                message="缺少凭据：需要 vidu.cn Cookie（短信登录或官网导入）")
+        try:
+            s = _tls13_only_session()
+            r = s.get(BASE + "/credit/v1/credits/me",
+                      headers={**self._headers(), "Cookie": cookie}, timeout=20)
+        except Exception as exc:  # noqa: BLE001
+            return VerifyResult(ok=False, status="risk",
+                                message="网络异常，暂不判定失效：%s" % exc)
+        if r.status_code in (401, 403):
+            return VerifyResult(ok=False, status="invalid",
+                                message="登录态已失效（HTTP %d），请重新登录" % r.status_code)
+        if r.status_code >= 500 or r.status_code == 429:
+            return VerifyResult(ok=False, status="risk",
+                                message="上游临时错误（HTTP %d）" % r.status_code)
+        try:
+            payload = r.json() if r.content else {}
+        except ValueError:
+            return VerifyResult(ok=False, status="risk", message="上游返回非 JSON")
+        if isinstance(payload, dict) and payload.get("data") is not None:
+            code = str(payload.get("code", "0"))
+            if code in ("0", "200", ""):
+                return VerifyResult(ok=True, status="active",
+                                    account_type=sniff_account_type(payload), raw=payload)
+        return VerifyResult(ok=False, status="risk",
+                            message="未能确认登录态，暂不判定失效", raw=payload)
 
     def credits(self, secret: AccountSecret) -> CreditView:
         """GET /credit/v1/credits/me（总积分）+ /iam/v1/users/every-day-credit（每日免费额度）。

@@ -18,6 +18,7 @@ from src.platform.antiban import antiban, circuit, fingerprints, proxy_binder, r
 from src.platform.db import db, now
 from src.platform.jobs import store, worker
 from src.platform.keys import keys
+from src.platform.oauth_state import oauth_state
 from src.platform.session import keeper
 
 router = APIRouter()
@@ -176,6 +177,16 @@ def login_oauth(channel: str = Query(...)):
 
 
 # ---- OAuth 回调（公开，不需要 API Key）：浏览器/书签把登录态回传到这里 ----
+# 安全约束：本端点**免鉴权**（在 keys.PUBLIC_PATHS 里），因此必须靠「一次性 state」
+# 证明这次回传确实由已登录控制台的用户发起，否则任何人都能跨域 POST 任意 cookie
+# 进来刷账号（CSRF 账号投毒 + 无限建号 DoS + 超长 cookie 撑爆 DB）。
+# 校验链：合法 JSON -> channel 白名单 -> state 有效且一次性 -> channel 与 state 绑定一致
+#         -> cookie 体积/条目上限 -> 解析非空 -> 建号。
+OAUTH_STATE_INVALID = "回调已过期或无效，请回到控制台重新生成登录链接/书签"
+OAUTH_STATE_MISMATCH = "回调渠道不匹配，请回到控制台重新生成该渠道的登录链接/书签"
+OAUTH_COOKIE_MAX_BYTES = 32 * 1024      # 明文 cookie 字符串上限 32KB
+OAUTH_COOKIE_MAX_ITEMS = 500            # 解析后 cookie 条目上限 500
+
 
 @router.get("/oauth/callback")
 def oauth_callback_page(channel: str = Query(""), state: str = Query("")):
@@ -212,31 +223,47 @@ def oauth_callback_page(channel: str = Query(""), state: str = Query("")):
 async def oauth_callback_receive(request: Request):
     """接收回传的登录态并自动建账号。
 
-    支持两种 body：
-      - JSON: {"channel": "...", "cookie": "...", "state": "..."}
-      - 纯文本: 形如 "channel=coze&cookie=..."（书签用 fetch 发 text 也行）
+    body（JSON）：{"channel": "...", "state": "...", "cookie": "..."}
+
+    `state` 必须由 GET /api/accounts/login/oauth（需鉴权）签发，消费一次即失效，
+    用于防 CSRF 与防重放；`cookie` 有体积与条目上限。任一项不符 -> 400。
     """
-    channel = ""
-    cookie = ""
+    # 1) 只接受 JSON（旧的纯文本 form 回传不再放行，否则等于绕开 state 校验）
     try:
         body = await request.json()
-        channel = (body.get("channel") or "").strip()
-        cookie = (body.get("cookie") or "").strip()
-    except Exception:
-        raw = (await request.body()).decode("utf-8", "replace").strip()
-        for part in raw.split("&"):
-            if part.startswith("channel="):
-                channel = part[len("channel="):]
-            elif part.startswith("cookie="):
-                cookie = part[len("cookie="):]
-        if not channel:
-            channel = request.query_params.get("channel", "")
+    except Exception:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail="请求体不是合法 JSON")
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="请求体不是合法 JSON")
+
+    channel = str(body.get("channel") or "").strip()
+    cookie = body.get("cookie") or ""
+    state = str(body.get("state") or "").strip()
+    if not isinstance(cookie, str):
+        cookie = json.dumps(cookie, ensure_ascii=False)
+    cookie = cookie.strip()
     if not channel or not cookie:
         raise HTTPException(status_code=400, detail="缺少 channel 或 cookie")
 
-    ch = registry.get(channel)
-    if ch is None:
+    # 2) channel 白名单
+    if registry.get(channel) is None:
         raise HTTPException(status_code=404, detail=f"渠道不存在：{channel}")
+
+    # 3) 一次性 state：缺失 / 过期 / 已用过 -> 400（consume 内部即刻删除，防重放）
+    if not state:
+        raise HTTPException(status_code=400, detail=OAUTH_STATE_INVALID)
+    bound = oauth_state.consume(state)
+    if bound is None:
+        raise HTTPException(status_code=400, detail=OAUTH_STATE_INVALID)
+    # 4) state 绑定的渠道必须与 body 一致，防止跨渠道注入
+    if bound != channel:
+        raise HTTPException(status_code=400, detail=OAUTH_STATE_MISMATCH)
+
+    # 5) cookie 体积上限（在解析之前先卡，避免超大字符串进解析）
+    if len(cookie.encode("utf-8", "replace")) > OAUTH_COOKIE_MAX_BYTES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"cookie 过大（上限 {OAUTH_COOKIE_MAX_BYTES // 1024}KB）")
 
     # 解析 cookie：兼容 "a=1; b=2" / JSON 数组 / {"cookies":[...]} / 扁平对象
     try:
@@ -244,7 +271,7 @@ async def oauth_callback_receive(request: Request):
         cookies = parsed.get("cookies", parsed) if isinstance(parsed, dict) else parsed
         if not isinstance(cookies, (dict, list)):
             cookies = {}
-    except Exception:
+    except Exception:  # noqa: BLE001
         cookies = {}
         for kv in cookie.split(";"):
             kv = kv.strip()
@@ -254,6 +281,11 @@ async def oauth_callback_receive(request: Request):
 
     if not cookies:
         raise HTTPException(status_code=400, detail="cookie 解析后为空")
+    # 6) 条目上限（防止一条 cookie 塞几千个键撑爆 DB）
+    if len(cookies) > OAUTH_COOKIE_MAX_ITEMS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"cookie 条目过多（上限 {OAUTH_COOKIE_MAX_ITEMS} 条，实际 {len(cookies)} 条）")
 
     acc = manager.add(channel, name=f"oauth-{channel}",
                       cookies=cookies, oauth=None, browser_state=None,

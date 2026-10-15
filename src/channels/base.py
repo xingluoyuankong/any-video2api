@@ -95,6 +95,71 @@ def sniff_account_type(raw: Any) -> str:
     return ""
 
 
+# ---------------------------------------------------------------------------
+# verify() 共用判定工具
+#
+# 判定口径（务必保守）：只有**明确**的「未登录 / 登录态失效」才判 invalid；
+# 网络抖动、限流、上游通用错误一律判 risk。reason：invalid 会被账号保活任务
+# 当作"凭据已死"处理，误杀代价远高于"暂时无法确认"。
+# ---------------------------------------------------------------------------
+
+#: 上游文本里明确表示「未登录 / 登录态失效」的关键词（小写比对）
+LOGIN_EXPIRED_HINTS = (
+    # 英文 / 上游原文
+    "not login", "not_login", "notlogin", "no login", "unlogin", "unauthorized",
+    "login expired", "session expired", "session invalid", "user is not login",
+    "invalid token", "token invalid", "token is invalid", "token expired",
+    "invalid cookie", "cookie expired", "please login", "please sign in",
+    # 中文
+    "未登录", "未登陆", "请先登录", "请重新登录", "登录已过期", "登录态失效",
+    "登录失效", "token 失效", "token失效", "凭证失效", "凭据失效", "身份已过期",
+    # 上游数字码（401 单独出现时由渠道按 HTTP 状态码判定，此处兜底文本里的 401）
+    "http 401", "http401", "code 401", "code=401", "code: 401",
+)
+
+
+def looks_login_expired(text: Any) -> bool:
+    """判断上游文本是否**明确**表示未登录 / 登录态失效。"""
+    s = str(text or "").lower()
+    if not s:
+        return False
+    return any(h in s for h in LOGIN_EXPIRED_HINTS)
+
+
+def is_transient_error(exc: BaseException) -> bool:
+    """网络 / 超时 / TLS / 代理 / 断流类异常 -> True（判 risk，不误杀账号）。
+
+    base.py 不硬依赖 requests（部分渠道可能换传输层），故惰性导入。
+    """
+    if isinstance(exc, (TimeoutError, ConnectionError, OSError)):
+        return True
+    try:
+        import requests  # noqa: PLC0415
+    except Exception:  # noqa: BLE001
+        return False
+    return isinstance(exc, requests.exceptions.RequestException)
+
+
+def verify_from_exception(exc: BaseException, what: str = "",
+                          raw: Optional[Dict[str, Any]] = None) -> VerifyResult:
+    """把 verify 过程抛出的异常统一翻译成 VerifyResult。
+
+    优先级：明确未登录 -> invalid；网络/临时 -> risk；其它未知 -> risk（保守）。
+    """
+    detail = str(exc) or type(exc).__name__
+    ev = dict(raw or {})
+    ev.setdefault("exception", f"{type(exc).__name__}: {detail[:300]}")
+    what = what or ""
+    if looks_login_expired(detail):
+        return VerifyResult(ok=False, status="invalid",
+                            message=f"{what}登录态已失效，请重新导入凭据", raw=ev)
+    if is_transient_error(exc):
+        return VerifyResult(ok=False, status="risk",
+                            message=f"{what}校验网络异常，暂不判定失效：{detail[:120]}", raw=ev)
+    return VerifyResult(ok=False, status="risk",
+                        message=f"{what}校验未完成（{type(exc).__name__}）：{detail[:120]}", raw=ev)
+
+
 @dataclass
 class ModelSpec:
     id: str
@@ -185,6 +250,32 @@ class Channel(abc.ABC):
     def __init__(self, spec: ChannelSpec, log=None):
         self.spec = spec
         self.log = log
+        # 部分渠道类未声明类级 name，回落到描述符名，保证 self.name 与注册表 key 一致
+        # （login_oauth 签发的一次性 state 正是按 self.name 绑定渠道的）
+        if not self.name:
+            self.name = spec.name
+
+    # ---- 日志（self.log 可能为空）---------------------------------------
+    # registry 实例化渠道时不传 logger（见 registry.ChannelRegistry.load），
+    # 平台某些调用路径也不注入，因此所有日志出口必须判空，且**日志本身出错**
+    # 绝不允许影响主流程（历史上出现过"except 里打日志 -> 抛新异常"的静默失败）。
+    def _log(self, level: str, msg: str, *args: Any, **kwargs: Any) -> None:
+        log = getattr(self, "log", None)
+        if log is None:
+            return
+        try:
+            emit = getattr(log, level, None) or log.warning
+            emit(msg, *args, **kwargs)
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _warn(self, msg: str, *args: Any, **kwargs: Any) -> None:
+        """渠道统一告警出口（等价 log.warning，self.log 为空时静默）。"""
+        self._log("warning", msg, *args, **kwargs)
+
+    def _info(self, msg: str, *args: Any, **kwargs: Any) -> None:
+        """渠道统一信息出口（等价 log.info，self.log 为空时静默）。"""
+        self._log("info", msg, *args, **kwargs)
 
     # ---- 元信息 ----------------------------------------------------------
     def capabilities(self) -> Dict[str, bool]:
@@ -206,8 +297,20 @@ class Channel(abc.ABC):
         """构造一次上游请求所需的全部头（含渠道特有签名）。"""
 
     def verify(self, secret: AccountSecret) -> VerifyResult:
-        """验证账号登录态。默认按 capability 探测；渠道可覆写。"""
-        return VerifyResult(ok=bool(secret.cookies or secret.oauth), status="unknown")
+        """验证账号登录态。**默认实现不会给出"活跃"结论**——渠道必须覆写。
+
+        历史坑：旧默认实现是 ``ok=bool(secret.cookies or secret.oauth)``，
+        只要存了任意 Cookie 就返回 ok=True，控制台显示"活跃"，实际凭据可能
+        早失效（假活跃）。现改为：无凭据 -> invalid；有凭据但未实现真实探测
+        -> ok=False/unknown（宁可"未知"，也不制造假活跃）。
+        """
+        has = bool(secret.cookies or secret.oauth or secret.extra)
+        if not has:
+            return VerifyResult(ok=False, status="invalid", message="缺少凭据")
+        return VerifyResult(
+            ok=False, status="unknown",
+            message=f"{self.name} 未实现真实登录态探测（默认实现不判定活跃）",
+        )
 
     def refresh(self, secret: AccountSecret) -> Optional[AccountSecret]:
         """OAuth 刷新。返回新凭据，或 None（不支持 / 失败）。"""
@@ -259,11 +362,16 @@ class Channel(abc.ABC):
         raise NotImplementedError(f"{self.name} 不支持账密登录")
 
     def login_oauth(self) -> Dict[str, Any]:
-        """返回 {login_url, callback_url, bookmarklet, hint}，供前端展示（不启动浏览器）。
+        """返回 {login_url, callback_url, bookmarklet, hint, state}，供前端展示（不启动浏览器）。
 
         默认给出官网登录链接 + 后端回调地址 + 书签脚本：
           用户用无痕窗口登录后，在官网页面执行书签 → Cookie 自动 POST 回后端 → 建账号。
         渠道若实现了真正的 OAuth 授权码流程，可覆写本方法。
+
+        安全：`state` 是一次性令牌（见 src/platform/oauth_state.py）。`/oauth/callback`
+        属于免鉴权公开端点，回调时必须带上这里签发的 state 才能建号，用于防 CSRF
+        （攻击者页面拿不到 state）与防重放（state 消费后即删）。
+        前端只展示 login_url / callback_url / bookmarklet / hint，新增 state 字段不影响展示。
         """
         extra = self.spec.extra or {}
         url = extra.get("login_url") or self.spec.base_url or ""
@@ -273,11 +381,19 @@ class Channel(abc.ABC):
         except Exception:  # noqa: BLE001
             base = ""
         cb = f"{base}/oauth/callback" if base else ""
+        # 说明：渠道类约定上不反向依赖 src.platform，但 login_oauth 是「平台登录胶水」
+        # 而非渠道业务逻辑，且与 src.core.config 一样按需延迟导入，避免加载期耦合。
+        try:
+            from src.platform.oauth_state import oauth_state
+            state = oauth_state.issue(self.name)
+        except Exception:  # noqa: BLE001  签发失败就明确给空，让回调必然拒绝
+            state = ""
         bm = ""
         if cb:
             bm = ("javascript:(function(){fetch('" + cb + "',{method:'POST',"
                   "headers:{'Content-Type':'application/json'},"
-                  "body:JSON.stringify({channel:'" + self.name + "',cookie:document.cookie})})"
+                  "body:JSON.stringify({channel:'" + self.name + "',state:'" + state + "',"
+                  "cookie:document.cookie})})"
                   ".then(function(r){return r.json()}).then(function(j){"
                   "alert(j.ok?'已回传登录态，请回控制台刷新账号列表':'失败：'+(j.detail||''))})"
                   ".catch(function(e){alert('回传失败：'+e)})})()")
@@ -290,6 +406,9 @@ class Channel(abc.ABC):
         }
         if bm:
             out["bookmarklet"] = bm
+        if state:
+            out["state"] = state
+            out["state_ttl"] = 600
         return out
 
     # ---- 错误归一化（渠道覆写以识别自家错误码）--------------------------

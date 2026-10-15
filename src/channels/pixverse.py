@@ -178,11 +178,13 @@ class PixverseChannel(Channel):
         try:
             payload = self._get("/getUserInfo", secret=secret)
         except Exception as exc:  # noqa: BLE001
-            return VerifyResult(ok=False, status="invalid", message=str(exc))
+            # 网络/限流是临时问题 -> risk（不能返回 invalid，否则保活会误杀账号）
+            return VerifyResult(ok=False, status="risk",
+                                message="网络或上游异常，暂不判定失效：%s" % exc)
         if payload.get("ErrCode") == 0:
             return VerifyResult(ok=True, status="active", raw=payload)
         if payload.get("ErrCode") == 10003:
-            return VerifyResult(ok=False, status="invalid", message="user is not login")
+            return VerifyResult(ok=False, status="invalid", message="未登录，请重新登录")
         return VerifyResult(ok=False, status="unknown", raw=payload)
 
     def credits(self, secret: AccountSecret) -> CreditView:

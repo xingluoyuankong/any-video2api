@@ -31,7 +31,8 @@ import requests
 import urllib3
 
 from .base import (AccountSecret, Channel, ChannelSpec, CreditView,
-                   GenerateRequest, PollResult, SubmitResult)
+                   GenerateRequest, PollResult, SubmitResult, VerifyResult,
+                   looks_login_expired, sniff_account_type, verify_from_exception)
 
 urllib3.disable_warnings()
 
@@ -107,7 +108,12 @@ class HailuoCnChannel(Channel):
             payload = {"_raw": resp.text[:300]}
         return payload, resp
 
-    def _get(self, path: str, token: str = "") -> Dict[str, Any]:
+    def _probe(self, path: str, token: str = "") -> tuple:
+        """带 HTTP 状态码的 GET。
+
+        verify 必须能区分「401 未登录」与「接口返回空 / 上游异常」——后者不能
+        判 invalid（会误杀账号），所以状态码不能丢。
+        """
         ts = int(time.time() * 1000)
         params = dict(self._device)
         params["uuid"] = str(uuid.uuid4())
@@ -123,9 +129,14 @@ class HailuoCnChannel(Channel):
             headers["token"] = token
         resp = requests.get(BASE + full, headers=headers, timeout=30, verify=False)
         try:
-            return resp.json()
+            payload = resp.json() if resp.content else {}
         except ValueError:
-            return {"_raw": resp.text[:300]}
+            payload = {"_raw": resp.text[:300]}
+        return resp.status_code, payload
+
+    def _get(self, path: str, token: str = "") -> Dict[str, Any]:
+        """GET 请求（保留原语义：只回 payload）。"""
+        return self._probe(path, token)[1]
 
     # ---- 在线登录 -------------------------------------------------------
     def login_methods(self) -> List[str]:
@@ -194,16 +205,50 @@ class HailuoCnChannel(Channel):
 
     @staticmethod
     def _tok(secret: Optional[AccountSecret]) -> str:
-        return (secret.extra.get("token") if secret and secret.extra else "") or ""
+        if not secret:
+            return ""
+        return str(secret.extra.get("token") or secret.cookies.get("_token") or "")
 
-    def verify(self, secret: AccountSecret):
-        from .base import VerifyResult
-        j = self._get("/v1/api/user/info", token=self._tok(secret))
-        si = j.get("statusInfo") or {}
-        if si.get("code") in (0, 1, None) and j.get("data"):
-            return VerifyResult(ok=True, status="active", raw=j)
-        return VerifyResult(ok=False, status="invalid",
-                            message=si.get("message") or "not login")
+    def verify(self, secret: AccountSecret) -> VerifyResult:
+        """真实探测登录态：先打额度接口（与海外版同源），失败再退到用户信息接口。
+
+        实测（假 token）：hailuoai.com 对两个端点一律回 **HTTP 401 + 空 body**，
+        故 401 -> invalid。判定口径与海外版一致：
+          无 token -> invalid（不发请求）；401/403/明确未登录 -> invalid；
+          5xx/429/网络异常/空数据 -> risk（不误杀）；拿到 data -> active。
+        """
+        token = self._tok(secret)
+        if not token:
+            return VerifyResult(ok=False, status="invalid",
+                                message="缺少凭据：需要海螺国内版 token（短信登录，或官网 Cookie 里的 _token）")
+        last: Optional[BaseException] = None
+        for path, label in (("/v1/api/billing/credit", "额度接口"),
+                            ("/v1/api/user/info", "用户信息接口")):
+            try:
+                status, payload = self._probe(path, token=token)
+            except Exception as exc:  # noqa: BLE001
+                self._warn("海螺国内版 verify（%s）异常: %s", label, exc, exc_info=True)
+                if looks_login_expired(str(exc)):
+                    return VerifyResult(ok=False, status="invalid",
+                                        message="海螺国内版登录态已失效，请重新登录导入凭据",
+                                        raw={"probe": path})
+                last = exc
+                continue
+            if status in (401, 403) or looks_login_expired(payload):
+                return VerifyResult(ok=False, status="invalid",
+                                    message="海螺国内版登录态已失效，请重新登录导入凭据",
+                                    raw={"probe": path, "http_status": status})
+            data = payload.get("data") if isinstance(payload, dict) else None
+            if isinstance(data, dict) and data:
+                self._info("海螺国内版 verify 通过（%s）", label)
+                return VerifyResult(ok=True, status="active",
+                                    message=f"登录态有效（{label}返回正常数据）",
+                                    account_type=sniff_account_type(payload),
+                                    raw=payload)
+            # 非凭据问题的失败：记住后换下一个探针，都不行就判 risk
+            last = RuntimeError(f"{label} HTTP {status}，无有效数据")
+        return verify_from_exception(last or RuntimeError("两个探针均无数据"),
+                                     what="海螺国内版")
 
     # ---- 生成 -----------------------------------------------------------
     def submit(self, secret: AccountSecret, req: GenerateRequest) -> SubmitResult:
