@@ -205,6 +205,21 @@ class GenerateRequest:
     timeout: int = 600
     idempotency_key: str = ""
 
+    def bare_model(self) -> str:
+        """剥掉渠道前缀（对外模型名是 channel:model，上游只认 model 段）。
+
+        实测：submit 收到 "pixverse:v6" 若原样传上游会报参数无效/下线，
+        因为 /v1/models 的 id 都带前缀，而上游只认冒号后的部分。
+        """
+        m = (self.model or "").strip()
+        if ":" in m:
+            head, tail = m.split(":", 1)
+            # 只有前缀恰好是当前渠道名时才剥，避免误伤含冒号的模型名
+            if head == self.channel:
+                return tail.strip()
+            return tail.strip()
+        return m
+
 
 @dataclass
 class SubmitResult:

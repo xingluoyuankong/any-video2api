@@ -102,9 +102,12 @@ class JobStore:
 def _req_to_json(req: GenerateRequest) -> dict:
     return {
         "channel": req.channel, "kind": req.kind, "model": req.model, "mode": req.mode,
+        "prompt": req.prompt,   # 必存：漏掉会导致 worker 恢复请求时 prompt 为空，
+                                # 上游收到空提示词报参数错误（pixverse 表现为 400018）
         "duration": req.duration, "ratio": req.ratio, "resolution": req.resolution,
         "size": req.size, "images": req.images, "params": req.params,
         "account_mode": req.account_mode, "timeout": req.timeout,
+        "account_id": req.account_id, "idempotency_key": req.idempotency_key,
     }
 
 

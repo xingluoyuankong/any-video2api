@@ -118,13 +118,13 @@ class TiktokChannel(Channel):
     # ---- 生成 ----
     def submit(self, secret: AccountSecret, req: GenerateRequest) -> SubmitResult:
         if req.kind == "image":
-            mid = IMAGE_MODELS.get(req.model, req.model)
+            mid = IMAGE_MODELS.get(req.bare_model(), req.bare_model())
             body = {"model": mid, "prompt": req.prompt, "images": req.images,
                     "settings": {"aspectRatio": req.ratio} if req.ratio else {}}
             ep_name = "image_submit"
         else:
             table = {"t2v": T2V_MODELS, "i2v": I2V_MODELS, "r2v": R2V_MODELS}.get(req.mode, T2V_MODELS)
-            mid = table.get(req.model, req.model)
+            mid = table.get(req.bare_model(), req.bare_model())
             body = {"model": mid, "prompt": req.prompt, "duration": req.duration,
                     "images": req.images,
                     "settings": {"aspectRatio": req.ratio} if req.ratio else {}}

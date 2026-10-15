@@ -351,7 +351,7 @@ class PixverseChannel(Channel):
     def submit(self, secret: AccountSecret, req: GenerateRequest) -> SubmitResult:
         if req.kind != "video":
             raise NotImplementedError("PixVerse 渠道暂只实现视频生成（image 接口 /image/t2i 已逆向未接入）")
-        model = VIDEO_MODELS.get(req.model, req.model or "v5.5")
+        model = VIDEO_MODELS.get(req.bare_model(), req.bare_model() or "v5.5")
         payload: Dict[str, Any] = {
             "prompt": req.prompt,
             "model": model,
@@ -386,38 +386,41 @@ class PixverseChannel(Channel):
 
     def poll(self, secret: AccountSecret, upstream_task_id: str,
              req: Optional[GenerateRequest] = None) -> PollResult:
-        payload = self._get("/task/list",
-                            {"page_num": 1, "page_size": 20}, secret=secret)
-        try:
-            resp = self._handle(payload)
-        except Exception as exc:  # noqa: BLE001
-            return PollResult(status="failed", error=str(exc), raw=payload)
-        items: List[Dict[str, Any]] = []
-        for key in ("TaskList", "task_list", "tasks", "List", "list"):
-            v = resp.get(key) if isinstance(resp, dict) else None
-            if isinstance(v, list):
-                items = v
-                break
-        target = None
-        for it in items:
-            if str(it.get("id") or it.get("Id") or it.get("video_id")
-                   or it.get("VideoId") or "") == str(upstream_task_id):
-                target = it
-                break
-        if target is None:
-            return PollResult(status="processing", raw={"found": False, "count": len(items)})
-        status_raw = target.get("status") or target.get("Status")
-        try:
-            status_num = int(status_raw)
-        except (TypeError, ValueError):
-            status_num = -1
-        status = _TASK_STATUS_MAP.get(status_num) or norm_status(str(status_raw))
-        media = [u for u in (target.get("video_url"), target.get("url")) if u]
-        covers = [u for u in (target.get("cover_url"), target.get("first_frame")) if u]
-        return PollResult(status=status, media=[str(u) for u in media],
-                          covers=[str(u) for u in covers], raw=target)
+        """查询视频生成状态。
 
-    # ---- 错误归一化 -----------------------------------------------------
+        实测结论（2026-10-16）：
+        - /task/list 是【签到任务】接口，与视频生成无关，不能拿来查视频
+        - /web/feeds/detail 用 feed_id（作品页 ID）而非 video_id 查询，
+          提交 /video/t2v 只返回 video_id，两者不同 —— 需要先拿到 feed 列表
+        - 兜底方案：直接轮询生成结果 asset 列表 + credits 变化不可靠，
+          当前以"提交成功即 accepted，状态查询待 feed 列表接口逆向后补"实现，
+          并明确返回 pending 避免误判失败。
+        """
+        # 尝试一：feed detail（有的账号 video_id 即 feed_id，值得一试）
+        try:
+            d = self._post("/web/feeds/detail", {"feed_id": str(upstream_task_id)}, secret)
+            if isinstance(d, dict) and d.get("ErrCode") == 0:
+                resp = d.get("Resp") or {}
+                item = resp.get("feed") or resp.get("video") or resp or {}
+                status = str(item.get("video_status") or item.get("status") or "")
+                url = (item.get("url") or item.get("video_url")
+                       or item.get("output_url") or "")
+                # video_status: 实测枚举未定，遇 1/2/3 视为进行中，5/成功字样视为完成
+                if url:
+                    return PollResult(status="success", media=[url], raw=item)
+                if status in ("0", "1", "2", "3", "processing", "generating"):
+                    return PollResult(status="processing", raw=item)
+                if status in ("4", "5", "success", "done"):
+                    return PollResult(status="success", raw=item)
+                if status in ("6", "7", "failed", "error"):
+                    return PollResult(status="failed",
+                                      error="pixverse video_status=%s" % status, raw=item)
+        except Exception:  # noqa: BLE001
+            pass
+        # 查不到就保持 pending（绝不能误判失败，否则触发账号冷却）
+        return PollResult(status="processing",
+                          note="pending: feed 列表接口待逆向，无法核验状态")
+
     def classify_error(self, payload: Any) -> str:
         try:
             s = json.dumps(payload, ensure_ascii=False)

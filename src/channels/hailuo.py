@@ -402,7 +402,7 @@ class HailuoChannel(Channel):
         body = {
             "quantity": 1,
             "parameter": {
-                "modelID": str(req.model or "23000"),
+                "modelID": str(req.bare_model() or "23000"),
                 "desc": req.prompt,
                 "fileList": [],
                 "useOriginPrompt": True,

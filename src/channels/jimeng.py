@@ -192,7 +192,7 @@ class JimengChannel(Channel):
 
     # ---- 生成 ----
     def _payload(self, req: GenerateRequest) -> dict:
-        model_id = (self.spec.models or {}).get(req.model, req.model)
+        model_id = (self.spec.models or {}).get(req.bare_model(), req.bare_model())
         duration_ms = max(4000, min(180000, int(req.duration * 1000)))
         submit_id = str(uuid.uuid4())
         component_id = str(uuid.uuid4())
