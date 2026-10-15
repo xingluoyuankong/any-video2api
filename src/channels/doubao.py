@@ -174,7 +174,7 @@ class DoubaoChannel(Channel):
         return CreditView(error="doubao 网页版未暴露额度查询接口")
 
     def checkin(self, secret: AccountSecret) -> Dict[str, Any]:
-        return {"status": "unsupported", "reason": "doubao 网页版无签到接口"}
+        return {"ok": False, "message": "豆包网页版上游未提供签到或每日奖励接口"}
 
     def verify(self, secret: AccountSecret) -> VerifyResult:
         cookies = secret.cookies or {}

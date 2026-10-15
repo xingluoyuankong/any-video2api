@@ -115,6 +115,21 @@ class PixverseChannel(Channel):
             raise RuntimeError("pixverse 非 JSON 响应 %s: %s" % (r.status_code, r.text[:200]))
         return payload
 
+    def checkin(self, secret: AccountSecret) -> Dict[str, Any]:
+        """签到/每日奖励探测。统一契约：{"ok", "message", "reward"}。"""
+
+        try:
+            r = self._get("/user/checkin", secret=secret)
+            txt = str(r)
+            if isinstance(r, dict) and r.get("ErrCode") == 0:
+                return {"ok": True, "message": "PixVerse 签到返回：%s" % txt[:120]}
+            return {"ok": False, "message": "PixVerse 签到接口响应：%s" % txt[:120]}
+        except Exception as exc:  # noqa: BLE001
+            s = str(exc)
+            if "10003" in s or "not login" in s.lower() or "login" in s.lower():
+                return {"ok": False, "message": "登录态已失效，请重新登录"}
+            return {"ok": False, "message": "PixVerse 上游未提供签到接口（%s）" % s[:80]}
+
     def _get(self, path: str, params: Optional[Dict[str, Any]] = None,
              secret: Optional[AccountSecret] = None) -> Dict[str, Any]:
         headers = self._base_headers()

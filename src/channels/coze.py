@@ -145,13 +145,17 @@ class CozeChannel(Channel):
     def checkin(self, secret: AccountSecret) -> Dict[str, Any]:
         url = os.getenv("COZE_CHECKIN_URL", "")
         if not url:
-            return {"status": "unsupported", "reason": "no_confirmed_protocol_checkin_action"}
-        headers = self.build_headers(secret, "/checkin")
+            return {"ok": False,
+                    "message": "扣子未配置签到接口（环境变量 COZE_CHECKIN_URL）；网页版无公开签到协议"}
         try:
-            r = self._client().request("POST", url, body={}, headers=headers)
-            return {"status": str(r.get("status") or "success"), "raw": redact(r)}
+            r = self._client().request("POST", url, body={},
+                                       headers=self.build_headers(secret, "/checkin"))
+            return {"ok": True, "message": "扣子签到成功", "reward": "积分"}
         except UpstreamError as e:
-            return {"status": "failed", "message": str(e)}
+            s = str(e)
+            if "401" in s or "未登录" in s:
+                return {"ok": False, "message": "登录态已失效，请重新登录"}
+            return {"ok": False, "message": "签到失败：%s" % s[:100]}
 
     # ---- 生成（工作流） ----
     def submit(self, secret: AccountSecret, req: GenerateRequest) -> SubmitResult:

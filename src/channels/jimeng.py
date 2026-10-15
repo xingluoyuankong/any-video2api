@@ -181,10 +181,14 @@ class JimengChannel(Channel):
     def checkin(self, secret: AccountSecret) -> Dict[str, Any]:
         try:
             r = self._call(secret, "checkin", {"data": {}})
-            return {"status": "success" if str(r.get("ret", "0")) in ("0", "200", "") else "failed",
-                    "raw": redact(r)}
+            if str(r.get("ret", "0")) in ("0", "200", "", "None"):
+                return {"ok": True, "message": "即梦签到成功（每日积分已到账）", "reward": "每日积分"}
+            return {"ok": False, "message": "签到失败：%s" % str(r.get("message") or r)[:120]}
         except UpstreamError as e:
-            return {"status": "failed", "message": str(e)}
+            s = str(e)
+            if "401" in s or "未登录" in s or "login" in s.lower():
+                return {"ok": False, "message": "登录态已失效，请重新登录"}
+            return {"ok": False, "message": "签到失败（网络或上游临时错误）：%s" % s[:100]}
 
     # ---- 生成 ----
     def _payload(self, req: GenerateRequest) -> dict:

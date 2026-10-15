@@ -134,6 +134,24 @@ class HailuoCnChannel(Channel):
             payload = {"_raw": resp.text[:300]}
         return resp.status_code, payload
 
+    def checkin(self, secret: AccountSecret) -> Dict[str, Any]:
+        """签到/每日奖励探测。统一契约：{"ok", "message", "reward"}。"""
+
+        tok = self._tok(secret)
+        if not tok:
+            return {"ok": False, "message": "缺少凭据：需要海螺国内版 token（请重新登录）"}
+        try:
+            d = self._get("/v1/api/charge/monthly_gift_eligible", token=tok)
+            if isinstance(d, dict) and d.get("isEligible"):
+                return {"ok": True, "message": "检测到可领取的礼包资格，请到官网个人中心领取",
+                        "reward": "月卡礼包资格"}
+            return {"ok": False, "message": "海螺（国内版）没有每日签到功能；贝壳通过充值或官方活动获取"}
+        except Exception as exc:  # noqa: BLE001
+            s = str(exc)
+            if "401" in s or "失效" in s or "login" in s.lower():
+                return {"ok": False, "message": "登录态已失效，请重新登录"}
+            return {"ok": False, "message": "查询礼包资格失败（网络异常）：%s" % s[:100]}
+
     def _get(self, path: str, token: str = "") -> Dict[str, Any]:
         """GET 请求（保留原语义：只回 payload）。"""
         return self._probe(path, token)[1]

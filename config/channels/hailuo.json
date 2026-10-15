@@ -6,7 +6,9 @@
   "proxy": "",
   "timeout": 120,
   "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36",
-  "transports": ["requests"],
+  "transports": [
+    "requests"
+  ],
   "extra": {
     "login_url": "https://hailuoai.video/",
     "home_url": "https://hailuoai.video/"
@@ -17,5 +19,12 @@
     "upload": false,
     "login": true
   },
-  "models": {}
+  "models": {
+    "hailuo-video-23000": "23000",
+    "hailuo-video-23001": "23001",
+    "hailuo-video-23010": "23010",
+    "hailuo-video-23011": "23011",
+    "hailuo-video-23021": "23021",
+    "hailuo-video-23102": "23102"
+  }
 }

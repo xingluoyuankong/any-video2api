@@ -42,6 +42,13 @@ class TiktokChannel(Channel):
                 user_agent=self.spec.user_agent, channel=self.name, account_id=account_id)
         return self._clients[key]
 
+    def checkin(self, secret: AccountSecret) -> Dict[str, Any]:
+        """签到/每日奖励探测。统一契约：{"ok", "message", "reward"}。"""
+
+        if not (secret.cookies or {}):
+            return {"ok": False, "message": "缺少凭据：需要 TikTok CUE Cookie（请重新登录）"}
+        return {"ok": False, "message": "TikTok Symphony/CUE 上游未提供签到或每日奖励接口"}
+
     # ---- 认证 ----
     def build_headers(self, secret: AccountSecret, path: str, body: Any = None,
                       extra: Optional[Dict[str, str]] = None) -> Dict[str, str]:

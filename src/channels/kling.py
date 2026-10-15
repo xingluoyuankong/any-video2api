@@ -204,6 +204,46 @@ class KlingChannel(Channel):
     def login_by_password(self, account: str, password: str) -> Optional[AccountSecret]:
         return self._login({"phone": account, "password": password, "sid": SID})
 
+    def checkin(self, secret: AccountSecret) -> Dict[str, Any]:
+        """签到/每日奖励探测。统一契约：{"ok", "message", "reward"}。"""
+        cookie = self._cookie_of(secret)
+        if not cookie:
+            return {"ok": False, "message": "缺少凭据：需要 klingai.com Cookie（请重新登录）"}
+        import requests as _rq
+        s = _rq.Session()
+        s.headers.update({"User-Agent": self.UA if hasattr(self, "UA") else
+                          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/135.0.0.0",
+                          "Referer": "https://klingai.com/", "Origin": "https://klingai.com"})
+        for ck in cookie.split("; "):
+            if "=" in ck:
+                k, v = ck.split("=", 1)
+                s.cookies.set(k.strip(), v.strip())
+        # 试常见签到端点（401/参数错=存在，404=不存在）
+        for method, path, body in (("POST", "/api/task/sign", {}),
+                                   ("GET", "/api/account/sign/status", None),
+                                   ("POST", "/api/account/sign", {}),
+                                   ("GET", "/api/account/daily/reward", None)):
+            try:
+                if method == "GET":
+                    r = s.get(self.KLING_BASE + path, timeout=15, verify=False)
+                else:
+                    r = s.post(self.KLING_BASE + path, json=body, timeout=15, verify=False)
+                if r.status_code == 404:
+                    continue
+                try:
+                    j = r.json()
+                except Exception:  # noqa: BLE001
+                    continue
+                # 信封里出现「成功/已签到/奖励」即认为命中
+                txt = str(j)
+                if r.status_code in (200, 201) and ("sign" in txt.lower() or "积分" in txt or "point" in txt.lower()):
+                    return {"ok": True,
+                            "message": "可灵签到接口命中（%s %s），返回 %s" % (method, path, txt[:120]),
+                            "reward": path}
+            except Exception:  # noqa: BLE001
+                continue
+        return {"ok": False, "message": "可灵上游未提供公开的每日签到接口（已探测 4 个候选路径均不存在）"}
+
     # ---- 必需 abstract（本渠道只做登录）--------------------------------
     def build_headers(self, secret: AccountSecret, path: str, body: Any = None,
                       extra: Optional[Dict[str, str]] = None) -> Dict[str, str]:

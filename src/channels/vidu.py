@@ -244,6 +244,33 @@ class ViduChannel(Channel):
                         "（credit=可用数）")
         return view
 
+    def checkin(self, secret: AccountSecret) -> Dict[str, Any]:
+        """签到/每日奖励探测。统一契约：{"ok", "message", "reward"}。"""
+        cookie = self._cookie_of(secret)
+        if not cookie:
+            return {"ok": False, "message": "缺少凭据：需要 vidu.cn Cookie（请重新登录）"}
+        s = _tls13_only_session()
+        h = {**self._headers(), "Cookie": cookie}
+        # 每日免费额度查询（自动发放类，无独立签到按钮）
+        try:
+            r = s.get(BASE + "/iam/v1/users/every-day-credit", headers=h, timeout=20)
+            if r.status_code in (401, 403):
+                return {"ok": False, "message": "登录态已失效，请重新登录"}
+            try:
+                j = r.json()
+            except Exception:  # noqa: BLE001
+                j = {}
+            data = j.get("data") if isinstance(j, dict) else None
+            got = ""
+            if isinstance(data, dict):
+                got = str(data.get("credit") or data.get("freeCredit") or data.get("amount") or "")
+            return {"ok": True,
+                    "message": ("Vidu 每日免费额度：%s（每日自动发放，无需手动签到）" % got) if got
+                               else "Vidu 每日免费额度由系统自动发放（查询正常），无独立签到按钮",
+                    "reward": got}
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "message": "查询每日额度失败（网络异常）：%s" % exc}
+
     # ---- 必需 abstract（本渠道只做登录）--------------------------------
     def build_headers(self, secret: AccountSecret, path: str, body: Any = None,
                       extra: Optional[Dict[str, str]] = None) -> Dict[str, str]:

@@ -88,12 +88,14 @@ class HailuoChannel(Channel):
             payload = {"_raw": resp.text[:300]}
         return payload, resp
 
-    def _get(self, path: str, token: str = "") -> Dict[str, Any]:
+    def _get(self, path: str, token: str = "", extra_params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """GET 请求（签名体与前端一致：GET 时 bodyToYY 为 "{}"）。"""
         ts = int(time.time() * 1000)
         params = dict(self._device)
         params["uuid"] = str(uuid.uuid4())
         params["unix"] = ts
+        if extra_params:
+            params.update({k: v for k, v in extra_params.items() if v is not None})
         full = path + "?" + urllib.parse.urlencode(params)
         headers = {
             "User-Agent": UA,
@@ -186,18 +188,34 @@ class HailuoChannel(Channel):
         return view
 
     # ---- 海螺业务结构解析（statusInfo）----------------------------------
-    @staticmethod
-    def _biz_msg(j: Any) -> str:
-        """提取 statusInfo 里的中文错误；debugInfo 形如
-        'biz error: code=32, msg=短信发送过于频繁，请稍后再试'，取 msg= 后半段。"""
+    # 常见错误码中文映射（实跑沉淀）
+    _BIZ_ZH = {
+        2400008: "贝壳余额不足，请充值或去官网参加活动获取",
+        2400001: "参数错误或模型不存在",
+        32: "短信发送过于频繁，请稍后再试",
+        1200009: "验证码错误或已过期",
+        1200013: "手机号格式无效",
+    }
+
+    @classmethod
+    def _biz_msg(cls, j: Any) -> str:
+        """提取 statusInfo 里的错误：debugInfo(msg=) > 中文映射 > message(英文)。"""
         try:
             info = (j or {}).get("statusInfo") or {}
             if not info:
                 return ""
-            msg = str(info.get("debugInfo") or info.get("message") or "")
-            if "msg=" in msg:
-                msg = msg.split("msg=", 1)[1]
-            return msg or ("业务错误码 %s" % info.get("code"))
+            code = info.get("code") or 0
+            # debugInfo 形如 "biz error: code=32, msg=短信发送过于频繁，请稍后再试"
+            debug = str(info.get("debugInfo") or "")
+            if "msg=" in debug:
+                return debug.split("msg=", 1)[1]
+            if code in cls._BIZ_ZH:
+                return cls._BIZ_ZH[code]
+            msg = str(info.get("message") or "")
+            if msg:
+                zh = cls._BIZ_ZH.get(code)
+                return ("%s（%s）" % (zh, msg)) if zh else msg
+            return cls._BIZ_ZH.get(code) or ("业务错误码 %s" % code)
         except Exception:  # noqa: BLE001
             return ""
 
@@ -209,6 +227,29 @@ class HailuoChannel(Channel):
             code = 0
         if code:
             raise RuntimeError(self._biz_msg(j) or ("业务错误码 %s" % code))
+
+    def checkin(self, secret: AccountSecret) -> Dict[str, Any]:
+        """海螺无传统每日签到（实测 99 个接口确认）。
+        改为检查可领福利：月礼包资格（monthly_gift_eligible）+ 促销活动。"""
+        token = self._token_of(secret)
+        if not token:
+            return {"ok": False, "message": "缺少凭据：需要海螺 token（请重新登录）"}
+        # 1) 月礼包领取资格
+        try:
+            d = self._get("/v1/api/charge/monthly_gift_eligible", token=token)
+            if isinstance(d, dict) and d.get("isEligible"):
+                return {"ok": True,
+                        "message": "检测到可领取的礼包资格，请到官网 hailuoai.video 个人中心领取",
+                        "reward": "月卡礼包资格"}
+        except RuntimeError as e:
+            s = str(e)
+            if "401" in s or "失效" in s:
+                return {"ok": False, "message": "登录态已失效，请重新登录"}
+            return {"ok": False, "message": "查询礼包资格失败：%s" % s}
+        except Exception as e:  # noqa: BLE001
+            return {"ok": False, "message": "查询礼包资格失败：%s" % e}
+        # 2) 无每日签到
+        return {"ok": False, "message": "海螺没有每日签到功能；贝壳通过充值或官方活动获取"}
 
     # ---- 在线登录 -------------------------------------------------------
     def login_methods(self) -> List[str]:
@@ -246,10 +287,68 @@ class HailuoChannel(Channel):
             h["token"] = secret.extra["token"]
         return h
 
+    # ---- 生成（移植自 hailuoai 独立项目 generate_video/get_asset）---------
+    # 上游状态: 1=生成中 11/12=排队 2=成功 10=申诉通过 3/5/7/14=失败/敏感
+    _PENDING = (1, 11, 12)
+    _DONE = (2, 10)
+
     def submit(self, secret: AccountSecret, req: Any) -> Any:
-        raise NotImplementedError("海螺渠道在本平台只暴露登录能力；生成请用 E:/API管理工具/hailuoai")
+        """POST /v2/api/multimodal/generate/video -> data.id（轮询用）。"""
+        from .base import SubmitResult
+        token = self._token_of(secret)
+        if not token:
+            raise RuntimeError("缺少凭据：需要海螺 token（短信登录获取）")
+        body = {
+            "quantity": 1,
+            "parameter": {
+                "modelID": str(req.model or "23000"),
+                "desc": req.prompt,
+                "fileList": [],
+                "useOriginPrompt": True,
+                "resolution": "720",
+                "duration": int(req.duration or 6),
+                "aspectRatio": req.ratio or "16:9",
+            },
+            "projectID": "0",
+        }
+        j, _ = self._post("/v2/api/multimodal/generate/video", body, token=token)
+        self._biz_check(j)
+        data = j.get("data") or {}
+        vid = data.get("id") or data.get("videoID") or j.get("id")
+        if not vid:
+            raise RuntimeError("提交成功但响应里没有 id：%s" % str(j)[:300])
+        return SubmitResult(upstream_task_id=str(vid), transport="requests", raw={"channel": "hailuo"})
 
     def poll(self, secret: AccountSecret, upstream_task_id: str,
-                    req: Optional["GenerateRequest"] = None,
-                    **kw: Any) -> Any:
-        raise NotImplementedError("海螺渠道在本平台只暴露登录能力；生成请用 E:/API管理工具/hailuoai")
+             req: Optional["GenerateRequest"] = None, **kw: Any) -> Any:
+        """GET /public/v3/api/multimodal/video/detail?id=<videoID>。"""
+        from .base import PollResult
+        token = self._token_of(secret)
+        try:
+            data = self._get("/public/v3/api/multimodal/video/detail",
+                             token=token, extra_params={"id": str(upstream_task_id)})
+        except RuntimeError as e:
+            s = str(e)
+            if "401" in s or "失效" in s:
+                return PollResult(status="failed", error=s, error_class="auth_or_risk",
+                                  raw={"channel": "hailuo"})
+            return PollResult(status="processing", raw={"channel": "hailuo", "poll_error": s[:200]})
+        video = data.get("video") or data or {}
+        asset = video.get("videoAsset") or {}
+        status = asset.get("status")
+        urls = asset.get("videoURLs") or {}
+        url = asset.get("videoURL") or urls.get("feedURL") or ""
+        download = (asset.get("downloadURL") or urls.get("downloadURLWithoutWatermark")
+                    or urls.get("downloadURLWithWatermark") or url)
+        if status in self._PENDING:
+            return PollResult(status="processing", raw={"channel": "hailuo", "upstream_status": status})
+        if status in self._DONE:
+            if not download:
+                return PollResult(status="failed", error="生成完成但未拿到视频地址",
+                                  raw={"channel": "hailuo", "asset": str(asset)[:300]})
+            return PollResult(status="success", media=[download],
+                              covers=[asset.get("coverURL") or ""],
+                              raw={"channel": "hailuo", "upstream_status": status})
+        return PollResult(status="failed",
+                          error="上游状态 %s（3=失败 5=敏感 7=拒绝 14=敏感失败）" % status,
+                          raw={"channel": "hailuo", "upstream_status": status})
