@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
 
 
 class VideoRequest(BaseModel):
-    channel: str = "jimeng"
+    channel: str = ""   # 留空：由 model 前缀(channel:model)决定路由，勿写死默认渠道
     model: str = ""
     prompt: str = ""
     mode: str = "t2v"                     # t2v|i2v|r2v|...
@@ -38,7 +38,7 @@ class VideoRequest(BaseModel):
 
 
 class ImageRequest(BaseModel):
-    channel: str = "jimeng"
+    channel: str = ""   # 留空：由 model 前缀(channel:model)决定路由，勿写死默认渠道
     model: str = ""
     prompt: str = ""
     n: int = 1
@@ -60,7 +60,7 @@ class ImageRequest(BaseModel):
 
 
 class ChatRequest(BaseModel):
-    channel: str = "coze"
+    channel: str = ""   # 留空：由 model 前缀(channel:model)决定路由，勿写死默认渠道
     model: str = ""
     messages: List[Dict[str, Any]] = Field(default_factory=list)
     prompt: str = ""
@@ -79,7 +79,7 @@ class AccountPatch(BaseModel):
 
 
 class AccountImport(BaseModel):
-    channel: str = "jimeng"
+    channel: str = ""   # 留空：由 model 前缀(channel:model)决定路由，勿写死默认渠道
     name: str = ""
     cookies: Optional[Any] = None
     browser_state: Optional[Any] = None

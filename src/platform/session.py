@@ -222,16 +222,31 @@ class SessionKeeper:
 
     def needs_keepalive(self, account_id: str, secret: Optional[AccountSecret] = None,
                         interval: float = 1800) -> bool:
-        """距上次成功保活超过 interval（或从未保活）-> True。
+        """距上次尝试超过 interval（或从未保活）-> True。
 
         secret 仅作接口占位（保活判断只看 session_state），可为 None。
+
+        连续失败会触发两级保护，避免把上游打死：
+          1) 指数退避：连续失败 n 次 -> 间隔 × 2^n（上限 6 小时）
+          2) 熔断：连续失败达 relogin_threshold×2 次 -> 不再保活，
+             等用户重新登录（否则高频重试会触发风控，把临时失败变成真失效）
         """
         _ensure_schema()
-        st = db.one("SELECT last_keepalive_at FROM session_state WHERE account_id=?", (account_id,))
+        st = db.one("SELECT last_keepalive_at, consecutive_failures FROM session_state "
+                    "WHERE account_id=?", (account_id,))
         last = (st or {}).get("last_keepalive_at")
+        fails = int((st or {}).get("consecutive_failures") or 0)
+        threshold = int(config.get("session", "relogin_threshold", 3) or 3)
+
+        # 熔断：连续失败过多，停止保活（等重登），不再打上游
+        if fails >= max(threshold * 2, 6):
+            return False
         if not last:
             return True
-        return (time.time() - float(last)) >= interval
+        # 指数退避
+        eff = interval * (2 ** min(fails, 4)) if fails > 0 else interval
+        eff = min(eff, 21600.0)
+        return (time.time() - float(last)) >= eff
 
     # ---- 活动记账 --------------------------------------------------------
     def record_activity(self, account_id: str, kind: str = "keepalive",
@@ -270,6 +285,16 @@ class SessionKeeper:
                 args.append(t)
         else:
             sets.append("consecutive_failures=consecutive_failures+1")
+            # 失败也推进 last_keepalive_at（语义变为「最后一次尝试时间」）。
+            # 否则失败账号的该时间戳永远停在旧值，needs_keepalive 每轮都判 True，
+            # 30 分钟一轮无限重试 —— 实测把 coze/tiktok/jimeng 打到 70+ 次失败，
+            # 高频请求触发上游风控，反而把本来只是临时抖动的凭证彻底打死。
+            if kind == "keepalive":
+                sets.append("last_keepalive_at=?")
+                args.append(t)
+            elif kind == "refresh":
+                sets.append("last_refresh_at=?")
+                args.append(t)
         args.append(account_id)
         db.execute("UPDATE session_state SET " + ",".join(sets) + " WHERE account_id=?", tuple(args), True)
 

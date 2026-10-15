@@ -24,8 +24,24 @@ def _default_channel() -> str:
     return names[0]
 
 
+def _channel_from_model(model: str) -> str:
+    """从模型名解析渠道。约定格式 `channel:model_id`（如 pixverse:v5.5）。
+
+    这是对外 API 的路由核心：/v1/models 里所有 id 都带渠道前缀，
+    调用方传什么前缀就该路由到哪个渠道。忽略前缀会导致请求全部落到
+    registry.names()[0]（实测是 jimeng），返回 "no eligible account"。
+    """
+    m = (model or "").strip()
+    if ":" in m:
+        head = m.split(":", 1)[0].strip()
+        if head and registry.get(head) is not None:
+            return head
+    return ""
+
+
 def _to_generate(req: VideoRequest | ImageRequest, kind: str) -> GenerateRequest:
-    channel = req.channel or _default_channel()
+    # 渠道优先级：显式 req.channel > 模型名前缀 > 兜底第一个渠道
+    channel = (req.channel or "").strip() or _channel_from_model(req.model) or _default_channel()
     return GenerateRequest(
         channel=channel, kind=kind, model=req.model, prompt=req.prompt,
         mode=getattr(req, "mode", "t2v"), duration=getattr(req, "duration", 5),
