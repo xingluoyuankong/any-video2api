@@ -156,20 +156,71 @@ class HailuoCnChannel(Channel):
         """GET 请求（保留原语义：只回 payload）。"""
         return self._probe(path, token)[1]
 
+    # ---- 海螺国内版业务结构解析（statusInfo）------------------------------
+    # 常见错误码中文映射（实测沉淀，hailuoai.com）
+    _BIZ_ZH = {
+        32: "短信发送过于频繁，请稍后再试",
+        1200009: "验证码错误或已过期",
+        1200013: "手机号格式无效，请输入正确的手机号",
+        1200048: "当前国家或地区暂未支持短信",
+    }
+
+    @classmethod
+    def _biz_msg(cls, j: Any) -> str:
+        """提取 statusInfo 里的错误：debugInfo(msg=) > 中文映射 > message。"""
+        try:
+            info = (j or {}).get("statusInfo") or {}
+            if not info:
+                return ""
+            code = info.get("code") or 0
+            # debugInfo 形如 "biz error: code=32, msg=短信发送过于频繁，请稍后再试"
+            debug = str(info.get("debugInfo") or "")
+            if "msg=" in debug:
+                return debug.split("msg=", 1)[1]
+            if code in cls._BIZ_ZH:
+                return cls._BIZ_ZH[code]
+            msg = str(info.get("message") or "")
+            if msg and msg not in ("成功", "success"):
+                zh = cls._BIZ_ZH.get(code)
+                return ("%s（%s）" % (zh, msg)) if zh else msg
+            return cls._BIZ_ZH.get(code) or ""
+        except Exception:  # noqa: BLE001
+            return ""
+
+    def _biz_check(self, j: Any) -> None:
+        """statusInfo.code 非成功（0/1/None）-> 抛 RuntimeError（中文信息）。
+
+        国内版实测：成功 code=0（message="成功"）；手机号非法 code=1200013；
+        地区不支持 code=1200048；短信频繁 code=32。
+        """
+        try:
+            code = ((j or {}).get("statusInfo") or {}).get("code", 0)
+        except Exception:  # noqa: BLE001
+            code = 0
+        if code not in (0, 1, None):
+            raise RuntimeError(self._biz_msg(j) or ("业务错误码 %s" % code))
+
     # ---- 在线登录 -------------------------------------------------------
     def login_methods(self) -> List[str]:
         return ["sms", "pwd"]
 
     def login_send_sms(self, phone: str, area_code: str = "86") -> Dict[str, Any]:
-        """发送登录短信验证码（会真实下发短信）。实测：签名通过，进入业务层校验。"""
+        """发送登录短信验证码（会真实下发短信）。
+
+        端点/字段实测：POST /v1/api/user/login/sms/send body {"phone","region":"CN"}。
+        region 必须为 "CN"，否则按服务器地理位置判定为非 CN 区 -> 1200048。
+        不查 statusInfo 的话「发送过于频繁」等错误会被吞成空 {}，故先 _biz_check。
+        """
         j, _ = self._post("/v1/api/user/login/sms/send",
                           {"phone": phone, "region": "CN"})
+        self._biz_check(j)   # 1200013 / 1200048 / 32 等业务错误在此抛出
         return _unwrap(j)
 
     def login_by_sms(self, phone: str, code: str, area_code: str = "86") -> Optional[AccountSecret]:
         """手机号 + 验证码登录。国内版登录态同样走 token（响应 data / cookie）。"""
         j, resp = self._post("/v1/api/user/login/phone",
                              {"phone": phone, "code": str(code), "region": "CN"})
+        self._biz_check(j)   # 1200009 验证码错误等在此抛出
         data = _unwrap(j)
         token = ""
         for c in resp.cookies:

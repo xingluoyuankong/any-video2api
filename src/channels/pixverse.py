@@ -147,15 +147,27 @@ class PixverseChannel(Channel):
         return ["sms", "pwd"]
 
     def login_send_sms(self, phone: str, area_code: str = "86") -> Dict[str, Any]:
-        """发送登录短信验证码（会真实下发短信）。国内版仅支持 11 位大陆手机号。"""
+        """发送登录短信验证码（会真实下发短信）。国内版仅支持 11 位大陆手机号。
+
+        实测实锤（登录态多轮试错）：
+          * {"phone"}                            -> 400002 手机号格式无效
+          * {"phoneNumber"}                      -> 400008 验证字段不能为空
+          * {"phone","phoneNumber"}              -> 400008 仍缺必填
+          * {"phone","phoneNumber","type":1}     -> 400008
+          * {"phone","phoneNumber","type":"login"} -> 500120 通过校验进入发送（限流）
+        → 正确 body：phone + phoneNumber + type:"login"
+        """
         if str(area_code) not in ("86", "+86", ""):
             raise RuntimeError("PixVerse 国内版（pai.video）仅支持大陆手机号")
-        payload = self._post("/account/getPhoneCode", {"phone": phone})
+        payload = self._post("/account/getPhoneCode",
+                            {"phone": phone, "phoneNumber": phone, "type": "login"})
         return self._handle(payload)
 
     def login_by_sms(self, phone: str, code: str, area_code: str = "86") -> Optional[AccountSecret]:
         """手机号 + 验证码登录 -> Token。"""
-        payload = self._post("/account/loginPhoneWithCode", {"phone": phone, "code": str(code)})
+        payload = self._post("/account/loginPhoneWithCode",
+                             {"phone": phone, "phoneNumber": phone,
+                              "code": str(code), "type": "login"})
         resp = self._handle(payload)
         result = resp.get("Result") or {}
         token = result.get("Token") or ""
