@@ -6,7 +6,9 @@
   "proxy": "",
   "timeout": 120,
   "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36",
-  "transports": ["requests"],
+  "transports": [
+    "requests"
+  ],
   "extra": {
     "login_url": "https://www.vidu.cn/",
     "home_url": "https://www.vidu.cn/"
@@ -17,5 +19,16 @@
     "upload": false,
     "login": true
   },
-  "models": {}
+  "models": {
+    "vidu-viduq4": "viduq4",
+    "vidu-viduq3-pro": "viduq3-pro",
+    "vidu-viduq2": "viduq2",
+    "vidu-viduq2-pro": "viduq2-pro",
+    "vidu-viduq2-turbo": "viduq2-turbo",
+    "vidu-viduq2-pro-fast": "viduq2-pro-fast",
+    "vidu-viduq1": "viduq1",
+    "vidu-viduq1-classic": "viduq1-classic",
+    "vidu-vidu2.0": "vidu2.0",
+    "vidu-vidu1.5": "vidu1.5"
+  }
 }

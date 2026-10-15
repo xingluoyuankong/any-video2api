@@ -21,8 +21,9 @@ from typing import Any, Dict, List, Optional
 import requests
 import urllib3
 
-from .base import (AccountSecret, Channel, ChannelSpec, CreditView, VerifyResult,
-                   sniff_account_type, verify_from_exception)
+from .base import (AccountSecret, Channel, ChannelSpec, CreditView, ModelSpec,
+                   VerifyResult, sniff_account_type, verify_from_exception)
+from typing import Any, Dict, List, Optional
 from src.core.errors import redact
 
 urllib3.disable_warnings()
@@ -174,6 +175,32 @@ class HailuoChannel(Channel):
                             message="登录态有效",
                             account_type=sniff_account_type(data),
                             raw=redact(data) if isinstance(data, dict) else {})
+
+    def list_models(self, secret: AccountSecret) -> List[ModelSpec]:
+        """GET /public/v2/api/multimodal/video/model/info（公开，无需登录）。
+
+        实跑返回：{videoModels:[{modelID, parameter:{resolutions,durations}, defaultCost}],
+                  imageModels:[...], audioModels:[...]}
+        """
+        out: List[ModelSpec] = []
+        try:
+            data = self._get("/public/v2/api/multimodal/video/model/info") or {}
+        except Exception:  # noqa: BLE001
+            return out
+        for group, kind in (("videoModels", "video"), ("imageModels", "image"),
+                            ("audioModels", "audio")):
+            for m in data.get(group) or []:
+                mid = str((m or {}).get("modelID") or "")
+                if not mid:
+                    continue
+                cost = (m or {}).get("defaultCost")
+                out.append(ModelSpec(
+                    id=mid, alias="hailuo-%s-%s" % (kind, mid),
+                    display_name="海螺 %s %s%s" % (
+                        {"video": "视频", "image": "图片", "audio": "音频"}[kind],
+                        mid, ("（%s贝壳）" % cost) if cost else ""),
+                    kind=kind, raw=redact(m) if isinstance(m, dict) else {}))
+        return out
 
     def credits(self, secret: AccountSecret) -> CreditView:
         """多接口聚合额度：equity（总览）+ subscription（free/付费）+ user/info（VIP）。"""

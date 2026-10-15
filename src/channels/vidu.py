@@ -155,30 +155,22 @@ class ViduChannel(Channel):
         if not cookie:
             return VerifyResult(ok=False, status="invalid",
                                 message="缺少凭据：需要 vidu.cn Cookie（短信登录或官网导入）")
+        # 复用 credits() 的多接口聚合（TLS1.3-only + 结构解析都在里面）
         try:
-            s = _tls13_only_session()
-            r = s.get(BASE + "/credit/v1/credits/me",
-                      headers={**self._headers(), "Cookie": cookie}, timeout=20)
+            cv = self.credits(secret)
         except Exception as exc:  # noqa: BLE001
             return VerifyResult(ok=False, status="risk",
                                 message="网络异常，暂不判定失效：%s" % exc)
-        if r.status_code in (401, 403):
-            return VerifyResult(ok=False, status="invalid",
-                                message="登录态已失效（HTTP %d），请重新登录" % r.status_code)
-        if r.status_code >= 500 or r.status_code == 429:
+        if cv.error:
+            e = str(cv.error)
+            if "401" in e or "403" in e or "失效" in e:
+                return VerifyResult(ok=False, status="invalid",
+                                    message="登录态已失效，请重新登录")
             return VerifyResult(ok=False, status="risk",
-                                message="上游临时错误（HTTP %d）" % r.status_code)
-        try:
-            payload = r.json() if r.content else {}
-        except ValueError:
-            return VerifyResult(ok=False, status="risk", message="上游返回非 JSON")
-        if isinstance(payload, dict) and payload.get("data") is not None:
-            code = str(payload.get("code", "0"))
-            if code in ("0", "200", ""):
-                return VerifyResult(ok=True, status="active",
-                                    account_type=sniff_account_type(payload), raw=payload)
-        return VerifyResult(ok=False, status="risk",
-                            message="未能确认登录态，暂不判定失效", raw=payload)
+                                message="查询积分失败，暂不判定失效：%s" % e[:100])
+        return VerifyResult(ok=True, status="active",
+                            message="登录态有效，积分 %g" % cv.total,
+                            raw={"credits": cv.total})
 
     def credits(self, secret: AccountSecret) -> CreditView:
         """GET /credit/v1/credits/me（总积分）+ /iam/v1/users/every-day-credit（每日免费额度）。
@@ -279,10 +271,95 @@ class ViduChannel(Channel):
             h["Cookie"] = secret.extra["cookie"]
         return h
 
+    # ---- 生成（从独立项目移植，网页 Cookie 模式）-------------------------
+    # 提交: POST /vidu/v1/tasks -> {id}；轮询: GET /vidu/v1/tasks/{id} -> {state, creations}
+    _PENDING_STATES = {"created", "queueing", "preparation", "scheduling",
+                       "processing", "waiting"}
+    _SUCCESS_STATES = {"success", "done", "succeeded"}
+    _FAILED_STATES = {"failed", "error", "cancelled", "canceled"}
+
     def submit(self, secret: AccountSecret, req: Any) -> Any:
-        raise NotImplementedError("Vidu 渠道在本平台只暴露登录能力；生成请用 E:/API管理工具/vidu")
+        from .base import SubmitResult
+        cookie = self._cookie_of(secret)
+        if not cookie:
+            raise RuntimeError("缺少凭据：需要 vidu.cn Cookie（短信登录或官网导入）")
+        prompts: List[Dict[str, Any]] = []
+        if getattr(req, "prompt", ""):
+            prompts.append({"type": "text", "content": req.prompt})
+        for img in (getattr(req, "images", None) or []):
+            prompts.append({"type": "image", "content": img, "src_imgs": [img]})
+        kind = "text2video" if (getattr(req, "kind", "video") or "video") == "video" else "text2image"
+        # 实测实锤（登录态多轮试错）：
+        #  * 不传 resolution  -> 200 成功（服务端按账号等级定，free 默认 512）
+        #  * 传 resolution:720p -> 400 SubsplanNotSupportedForTask（free 订阅不支持）
+        #  * 传 resolution:480p -> 400 invalid field settings
+        # 所以 resolution 一律不下发，由上游按账号等级决定；其余参数照常传。
+        settings: Dict[str, Any] = {
+            "sample_count": 1,
+            "schedule_mode": "normal",
+            "model_version": str(getattr(req, "model", "") or "viduq2"),
+            "style": "general",
+            "use_trial": True,
+        }
+        if getattr(req, "duration", None):
+            settings["duration"] = int(req.duration)
+        if getattr(req, "ratio", ""):
+            settings["aspect_ratio"] = req.ratio
+        body = {"input": {"prompts": prompts, "editor_mode": "normal", "enhance": False},
+                "type": kind, "settings": settings}
+
+        s = _tls13_only_session()
+        r = s.post(BASE + "/vidu/v1/tasks", json=body,
+                   headers={**self._headers(), "Cookie": cookie}, timeout=60)
+        if r.status_code in (401, 403):
+            raise RuntimeError("登录态已失效（HTTP %d），请重新登录" % r.status_code)
+        try:
+            j = r.json() if r.content else {}
+        except ValueError:
+            raise RuntimeError("上游返回非 JSON（可能被 EdgeOne 拦）：%s" % r.text[:200])
+        code = str(j.get("code", "0")) if isinstance(j, dict) else "0"
+        if code not in ("0", "200", ""):
+            raise RuntimeError("提交失败：%s %s" % (code, str(j.get("message") or j)[:150]))
+        tid = (j or {}).get("id") or (j or {}).get("task_id") or ((j.get("data") or {}).get("id") if isinstance(j.get("data"), dict) else None)
+        if not tid:
+            raise RuntimeError("提交成功但未返回任务 id：%s" % str(j)[:250])
+        return SubmitResult(upstream_task_id=str(tid), transport="requests",
+                            raw={"channel": "vidu"})
 
     def poll(self, secret: AccountSecret, upstream_task_id: str,
                     req: Optional["GenerateRequest"] = None,
                     **kw: Any) -> Any:
-        raise NotImplementedError("Vidu 渠道在本平台只暴露登录能力；生成请用 E:/API管理工具/vidu")
+        from .base import PollResult
+        cookie = self._cookie_of(secret)
+        if not cookie:
+            return PollResult(status="failed", error="缺少凭据：需要 vidu.cn Cookie",
+                              error_class="auth_or_risk", raw={"channel": "vidu"})
+        try:
+            s = _tls13_only_session()
+            r = s.get(BASE + "/vidu/v1/tasks/" + str(upstream_task_id),
+                      headers={**self._headers(), "Cookie": cookie}, timeout=30)
+            if r.status_code in (401, 403):
+                return PollResult(status="failed", error="登录态已失效（HTTP %d）" % r.status_code,
+                                  error_class="auth_or_risk", raw={"channel": "vidu"})
+            j = r.json() if r.content else {}
+        except Exception as exc:  # noqa: BLE001
+            return PollResult(status="processing", raw={"channel": "vidu", "poll_error": str(exc)[:150]})
+
+        state = str((j or {}).get("state") or (j or {}).get("status") or "").lower()
+        creations = (j or {}).get("creations") or []
+        urls, covers = [], []
+        for c in creations:
+            if isinstance(c, dict):
+                u = c.get("url") or c.get("video_url") or c.get("uri")
+                if u:
+                    urls.append(u)
+                if c.get("cover"):
+                    covers.append(c["cover"])
+        if state in self._FAILED_STATES:
+            return PollResult(status="failed",
+                              error="上游状态 %s%s" % (state, (": " + str(j.get("err_msg"))) if j.get("err_msg") else ""),
+                              raw={"channel": "vidu", "state": state})
+        if urls:
+            return PollResult(status="success", media=urls, covers=covers,
+                              raw={"channel": "vidu", "state": state})
+        return PollResult(status="processing", raw={"channel": "vidu", "state": state or "pending"})
