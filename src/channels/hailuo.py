@@ -185,6 +185,31 @@ class HailuoChannel(Channel):
         view.message = "来源: GET /v1/api/billing/credit（贝壳=可用数）"
         return view
 
+    # ---- 海螺业务结构解析（statusInfo）----------------------------------
+    @staticmethod
+    def _biz_msg(j: Any) -> str:
+        """提取 statusInfo 里的中文错误；debugInfo 形如
+        'biz error: code=32, msg=短信发送过于频繁，请稍后再试'，取 msg= 后半段。"""
+        try:
+            info = (j or {}).get("statusInfo") or {}
+            if not info:
+                return ""
+            msg = str(info.get("debugInfo") or info.get("message") or "")
+            if "msg=" in msg:
+                msg = msg.split("msg=", 1)[1]
+            return msg or ("业务错误码 %s" % info.get("code"))
+        except Exception:  # noqa: BLE001
+            return ""
+
+    def _biz_check(self, j: Any) -> None:
+        """statusInfo.code != 0 -> 抛 RuntimeError（中文信息）。"""
+        try:
+            code = ((j or {}).get("statusInfo") or {}).get("code", 0) or 0
+        except Exception:  # noqa: BLE001
+            code = 0
+        if code:
+            raise RuntimeError(self._biz_msg(j) or ("业务错误码 %s" % code))
+
     # ---- 在线登录 -------------------------------------------------------
     def login_methods(self) -> List[str]:
         return ["sms"]
@@ -193,15 +218,14 @@ class HailuoChannel(Channel):
         """发送登录短信验证码（会真实下发短信）。"""
         j, _ = self._post("/v1/api/user/login/sms/send",
                           {"phone": phone, "region": "CN"})
-        if j.get("status") not in (0, None) and j.get("message"):
-            # 上游业务错误
-            raise RuntimeError(j.get("message") or j)
+        self._biz_check(j)   # 不查的话"发送过于频繁"等错误会被吞成空 {}
         return j.get("data") or {}
 
     def login_by_sms(self, phone: str, code: str, area_code: str = "86") -> Optional[AccountSecret]:
         """手机号 + 验证码登录，返回 _token 凭据。"""
         j, resp = self._post("/v1/api/user/login/phone",
                              {"phone": phone, "code": str(code), "region": "CN"})
+        self._biz_check(j)
         token = ""
         for c in resp.cookies:
             if c.name == "_token":
@@ -210,8 +234,7 @@ class HailuoChannel(Channel):
             data = j.get("data") or {}
             token = data.get("token") or data.get("_token") or ""
         if not token:
-            msg = j.get("message") or j.get("msg") or j
-            raise RuntimeError("登录失败：%s" % msg)
+            raise RuntimeError("登录失败：%s" % (self._biz_msg(j) or j))
         return AccountSecret(cookies={"_token": token}, oauth=None,
                              browser_state=None, extra={"token": token})
 
