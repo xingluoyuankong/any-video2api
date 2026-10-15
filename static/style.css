@@ -131,7 +131,7 @@ button { font-family:inherit; }
 .btn.icon { padding:7px 9px; }
 
 /* ---------- 表单 ---------- */
-input[type=text],input[type=password],input[type=number],select,textarea {
+input:not([type]),input[type=text],input[type=password],input[type=number],select,textarea {
   width:100%; background:var(--surface-2); color:var(--ink); border:1px solid var(--line);
   border-radius:var(--radius-sm); padding:8px 11px; font:inherit; font-size:13px; outline:none;
   transition:border-color var(--dur), box-shadow var(--dur);
