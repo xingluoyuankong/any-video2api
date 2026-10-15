@@ -60,6 +60,39 @@ def _tls13_only_session() -> requests.Session:
     return s
 
 
+def _edgeone_guarded_request(session: requests.Session, method: str, url: str, *,
+                             headers: Dict[str, str], max_retry: int = 2, **kw: Any):
+    """带 EdgeOne 挑战重放的请求。
+
+    EdgeOne 的 JS 盾（EO_Bot_Ssid/__tst_status）行为：首次请求返回 200 + 混淆 HTML
+    （内容含 __tst_status=计算值），同时 Set-Cookie 下发挑战；浏览器执行 JS 设置
+    cookie 后自动重载放行。requests 环境的对策：
+      1. 若响应是 text/html 且含 "__tst_status"，从 HTML 里提取计算出的 cookie 值
+         （脚本里 `document.cookie="__tst_status="+a(0)` 的 a(0) 是纯算术拼串，
+         可直接按常量求值），附加到 Cookie 头后重放。
+      2. 提取失败则原样返回（由调用方按非 JSON 处理）。
+    """
+    resp = session.request(method, url, headers=headers, timeout=kw.pop("timeout", 30), **kw)
+    ct = (resp.headers.get("content-type") or "").lower()
+    if "text/html" not in ct or "__tst_status" not in resp.text[:2000]:
+        return resp
+    import re as _re
+    m = _re.search(r't\+=e\[_0x649a\("0x0"\)\],t\+=e\[_0x649a\("0x1"\)\],t=e\[_0x649a\("0x2"\)\]\(t,e\[_0x649a\("0x3"\)\])', resp.text)
+    # 混淆常量表不可静态求值所有情形；退而求其次：直接用 Set-Cookie 里给的挑战值
+    set_ck = resp.headers.get("set-cookie") or ""
+    extra = ""
+    for part in set_ck.split(","):
+        if "__tst_status=" in part or "EO_Bot_Ssid" in part:
+            kv = part.split(";")[0].strip()
+            if "=" in kv:
+                extra += ("; " if extra else "") + kv
+    if extra:
+        headers = dict(headers)
+        headers["Cookie"] = (headers.get("Cookie", "") + "; " + extra).strip("; ")
+        return session.request(method, url, headers=headers, timeout=30, **kw)
+    return resp
+
+
 class ViduChannel(Channel):
     """Vidu —— 手机号 + 短信验证码。"""
 
@@ -299,7 +332,7 @@ class ViduChannel(Channel):
             "schedule_mode": "normal",
             "model_version": str(getattr(req, "model", "") or "viduq2"),
             "style": "general",
-            "use_trial": True,
+            "use_trial": False,  # 实测 trial 通道新号报 ActivityError，走正式通道扣积分
         }
         if getattr(req, "duration", None):
             settings["duration"] = int(req.duration)
@@ -336,8 +369,9 @@ class ViduChannel(Channel):
                               error_class="auth_or_risk", raw={"channel": "vidu"})
         try:
             s = _tls13_only_session()
-            r = s.get(BASE + "/vidu/v1/tasks/" + str(upstream_task_id),
-                      headers={**self._headers(), "Cookie": cookie}, timeout=30)
+            r = _edgeone_guarded_request(
+                s, "GET", BASE + "/vidu/v1/tasks/" + str(upstream_task_id),
+                headers={**self._headers(), "Cookie": cookie}, timeout=30)
             if r.status_code in (401, 403):
                 return PollResult(status="failed", error="登录态已失效（HTTP %d）" % r.status_code,
                                   error_class="auth_or_risk", raw={"channel": "vidu"})
@@ -356,9 +390,11 @@ class ViduChannel(Channel):
                 if c.get("cover"):
                     covers.append(c["cover"])
         if state in self._FAILED_STATES:
+            err_detail = str(j.get("err_msg") or j.get("err_code") or "")
             return PollResult(status="failed",
-                              error="上游状态 %s%s" % (state, (": " + str(j.get("err_msg"))) if j.get("err_msg") else ""),
-                              raw={"channel": "vidu", "state": state})
+                              error="上游状态 %s%s" % (state, (": " + err_detail) if err_detail else ""),
+                              error_class="upstream",
+                              raw={"channel": "vidu", "state": state, "err_code": j.get("err_code")})
         if urls:
             return PollResult(status="success", media=urls, covers=covers,
                               raw={"channel": "vidu", "state": state})
