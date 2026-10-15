@@ -99,17 +99,49 @@ class JimengChannel(Channel):
                                                         headers=headers)
 
     def verify(self, secret: AccountSecret) -> VerifyResult:
+        """两段式校验：passport 健康 + 商业积分接口强校验。
+
+        实测教训：只查 /passport/account/info/v2 时弱校验能过，但生成接口
+        返回 {"ret":"1015","errmsg":"login error"} —— passport 通过不代表
+        生成鉴权有效。所以必须再打一个商业端点（/commerce/v1/benefits/user_credit）。
+        判定：任一段明确 login error / 1015 -> invalid；网络/其它 -> risk 不误杀。
+        """
         try:
             r = self._call(secret, "health", None, params={"account_sdk_source": "web"})
             ok = str(r.get("ret", "0")) in ("0", "200", "") if isinstance(r, dict) else False
-            return VerifyResult(ok=ok, status="active" if ok else "invalid",
-                                account_type=sniff_account_type(r) if ok else "",
-                                message="" if ok else str(r)[:200], raw=redact(r))
+            if not ok:
+                msg = str((r or {}).get("errmsg") or (r or {}).get("message") or "未登录")
+                if "login" in msg.lower() or str((r or {}).get("ret")) == "1015":
+                    return VerifyResult(ok=False, status="invalid",
+                                        message="登录态已失效（%s）" % msg, raw=redact(r))
+                return VerifyResult(ok=False, status="risk", message=msg, raw=redact(r))
         except UpstreamError as e:
             s = str(e)
-            # 只有明确鉴权失败才算凭证失效；网络/限流/风控算临时错误（risk，不降级）
-            if "401" in s or "未登录" in s or "not logged" in s.lower():
+            if "401" in s or "未登录" in s or "not logged" in s.lower() or "1015" in s:
                 return VerifyResult(ok=False, status="invalid", message=s)
+            return VerifyResult(ok=False, status="risk", message=s)
+        except Exception as exc:  # noqa: BLE001
+            return VerifyResult(ok=False, status="risk", message="网络异常，暂不判定失效：%s" % exc)
+        # ---- 第二段：商业接口强校验 ----
+        try:
+            c = self._call(secret, "credit", None)
+            cok = str(c.get("ret", "0")) in ("0", "200", "") if isinstance(c, dict) else False
+            if cok:
+                return VerifyResult(ok=True, status="active",
+                                    account_type=sniff_account_type(c), raw=redact(c))
+            cmsg = str((c or {}).get("errmsg") or (c or {}).get("message") or "商业接口鉴权失败")
+            if "login" in cmsg.lower() or str((c or {}).get("ret")) == "1015":
+                return VerifyResult(ok=False, status="invalid",
+                                    message="登录态已失效（%s），请重新导入 Cookie" % cmsg, raw=redact(c))
+            return VerifyResult(ok=False, status="risk", message=cmsg, raw=redact(c))
+        except UpstreamError as e:
+            s = str(e)
+            if "1015" in s or "login" in s.lower():
+                return VerifyResult(ok=False, status="invalid",
+                                    message="登录态已失效：%s，请重新导入 Cookie" % s)
+            return VerifyResult(ok=False, status="risk", message=s)
+        except Exception as exc:  # noqa: BLE001
+            return VerifyResult(ok=False, status="risk", message="网络异常，暂不判定失效：%s" % exc)
             return VerifyResult(ok=False, status="risk", message=s)
 
     def list_models(self, secret: AccountSecret) -> List[ModelSpec]:
