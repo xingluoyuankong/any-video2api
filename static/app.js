@@ -2249,7 +2249,7 @@ function wire() {
   $$('#impTabs button').forEach(b => b.addEventListener('click', () => switchImpTab(b.dataset.impTab)));
   $('#impSubmit').addEventListener('click', submitImport);
   $('#impSendSms').addEventListener('click', sendSmsCode);
-  $('#impOauthStart').addEventListener('click', startOauth);
+  if ($('#impOauthStart')) $('#impOauthStart').addEventListener('click', startOauth);
   $('#impChannel').addEventListener('change', () => { applyImpTabs(); refreshChannelLogin(); switchImpTab(impTab); });
 
   // 编辑
