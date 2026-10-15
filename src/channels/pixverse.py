@@ -116,19 +116,76 @@ class PixverseChannel(Channel):
         return payload
 
     def checkin(self, secret: AccountSecret) -> Dict[str, Any]:
-        """签到/每日奖励探测。统一契约：{"ok", "message", "reward"}。"""
+        """每日签到（实测接口：GET /task/list 查任务 → POST /task/finish 完成）。
 
+        统一契约：{"ok", "message", "reward"}。
+        JS 逆向自 vendor chunk：tI=e=>U.get(`/task/list`,e); nI=e=>U.post(`/task/finish`,e)
+        """
         try:
-            r = self._get("/user/checkin", secret=secret)
-            txt = str(r)
-            if isinstance(r, dict) and r.get("ErrCode") == 0:
-                return {"ok": True, "message": "PixVerse 签到返回：%s" % txt[:120]}
-            return {"ok": False, "message": "PixVerse 签到接口响应：%s" % txt[:120]}
+            tasks = self._get("/task/list", secret=secret)
         except Exception as exc:  # noqa: BLE001
             s = str(exc)
-            if "10003" in s or "not login" in s.lower() or "login" in s.lower():
+            if "10003" in s or "not login" in s.lower():
                 return {"ok": False, "message": "登录态已失效，请重新登录"}
-            return {"ok": False, "message": "PixVerse 上游未提供签到接口（%s）" % s[:80]}
+            return {"ok": False, "message": "查询任务列表失败：%s" % s[:100]}
+
+        # 定位可完成的签到类任务
+        resp = tasks.get("Resp") if isinstance(tasks, dict) else None
+        items: List[Dict[str, Any]] = []
+        if isinstance(resp, dict):
+            for key in ("TaskList", "task_list", "tasks", "List", "list"):
+                v = resp.get(key)
+                if isinstance(v, list):
+                    items = v
+                    break
+            if not items and isinstance(resp.get("task_list"), list):
+                items = resp["task_list"]
+        elif isinstance(resp, list):
+            items = resp
+
+        if not items:
+            # 无任务列表结构：直接把原始响应返回，便于前端/日志核对
+            return {"ok": False, "message": "未取到任务列表：%s" % str(tasks)[:150],
+                    "raw": tasks}
+
+        # 找一个「可完成/未完成」的任务（签到通常是 daily 类）
+        target = None
+        for it in items:
+            if not isinstance(it, dict):
+                continue
+            status = str(it.get("status") or it.get("Status") or "").lower()
+            finished = it.get("finished") if "finished" in it else it.get("is_finished")
+            if finished in (True, 1) or status in ("finished", "done", "claimed", "2"):
+                continue
+            target = it
+            break
+        if target is None:
+            return {"ok": True, "message": "今日任务已完成（无需重复签到）",
+                    "reward": 0, "raw": tasks}
+
+        tid = target.get("id") or target.get("Id") or target.get("task_id") or target.get("taskId")
+        payload: Dict[str, Any] = {}
+        if tid is not None:
+            payload["task_id"] = tid
+        # 渠道私有参数透传
+        payload.update(getattr(self, "_checkin_extra", {}) or {})
+        try:
+            res = self._post("/task/finish", payload, secret)
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "message": "签到提交失败：%s" % str(exc)[:100]}
+        resp2 = res.get("Resp") if isinstance(res, dict) else res
+        reward = 0
+        if isinstance(resp2, dict):
+            for k in ("credits", "reward", "credit", "amount", "bonus"):
+                v = resp2.get(k)
+                if isinstance(v, (int, float)):
+                    reward = int(v)
+                    break
+        ok = bool(isinstance(res, dict) and res.get("ErrCode") in (0, None))
+        return {"ok": ok,
+                "message": "签到成功" if ok else "签到返回：%s" % str(res)[:130],
+                "reward": reward,
+                "raw": res}
 
     def _get(self, path: str, params: Optional[Dict[str, Any]] = None,
              secret: Optional[AccountSecret] = None) -> Dict[str, Any]:
@@ -144,7 +201,9 @@ class PixverseChannel(Channel):
 
     # ---- 在线登录 -------------------------------------------------------
     def login_methods(self) -> List[str]:
-        return ["sms", "pwd"]
+        # oauth = 浏览器登录后回传 cookie（pixverse 登录有网易易盾，纯协议不可行，
+        # 因此实际反代就是靠这条「官网登录 → 书签回传 cookie」链路）
+        return ["sms", "pwd", "oauth"]
 
     def login_send_sms(self, phone: str, area_code: str = "86") -> Dict[str, Any]:
         """发送登录短信验证码（会真实下发短信）。国内版仅支持 11 位大陆手机号。

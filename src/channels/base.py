@@ -376,21 +376,30 @@ class Channel(abc.ABC):
         """
         extra = self.spec.extra or {}
         url = extra.get("login_url") or self.spec.base_url or ""
+        # 只有渠道显式声明支持 oauth（回传登录态）时，才签发 state / 生成 bookmarklet。
+        # 否则前端「授权链接」tab 会被 applyImpTabs() 隐藏，这里也不该白白签发一次性 state。
+        try:
+            methods = self.login_methods() or []
+        except Exception:  # noqa: BLE001
+            methods = []
+        supports_oauth = "oauth" in methods
         try:
             from src.core.config import config
             base = config.public_base.rstrip("/")
         except Exception:  # noqa: BLE001
             base = ""
-        cb = f"{base}/oauth/callback" if base else ""
+        cb = f"{base}/oauth/callback" if (base and supports_oauth) else ""
         # 说明：渠道类约定上不反向依赖 src.platform，但 login_oauth 是「平台登录胶水」
         # 而非渠道业务逻辑，且与 src.core.config 一样按需延迟导入，避免加载期耦合。
-        try:
-            from src.platform.oauth_state import oauth_state
-            state = oauth_state.issue(self.name)
-        except Exception:  # noqa: BLE001  签发失败就明确给空，让回调必然拒绝
-            state = ""
+        state = ""
+        if supports_oauth:
+            try:
+                from src.platform.oauth_state import oauth_state
+                state = oauth_state.issue(self.name)
+            except Exception:  # noqa: BLE001  签发失败就明确给空，让回调必然拒绝
+                state = ""
         bm = ""
-        if cb:
+        if cb and state:
             bm = ("javascript:(function(){fetch('" + cb + "',{method:'POST',"
                   "headers:{'Content-Type':'application/json'},"
                   "body:JSON.stringify({channel:'" + self.name + "',state:'" + state + "',"
@@ -401,10 +410,16 @@ class Channel(abc.ABC):
         out: Dict[str, Any] = {
             "login_url": url,
             "callback_url": cb,
+            "supports_oauth": supports_oauth,
+            "login_methods": methods,
             "hint": "① 用【无痕窗口】打开官网登录（不影响本地浏览器账号）"
                     " → ② 登录后在官网页面按 F12 → Console 粘贴下面命令（或点书签）"
                     " → ③ 回控制台刷新账号列表。",
         }
+        if not supports_oauth:
+            out["hint"] = ("该渠道未声明支持回传登录态（支持：%s）。"
+                           "请改用「粘贴 Cookie」或对应的登录方式导入。"
+                           % (" / ".join(methods) or "无"))
         if bm:
             out["bookmarklet"] = bm
         if state:

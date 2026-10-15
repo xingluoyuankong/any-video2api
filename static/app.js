@@ -1048,6 +1048,24 @@ async function startOauth() {
   out.innerHTML = cards.join('');
 }
 
+/* 按渠道能力裁剪导入方式 tab：只展示该渠道真正支持的登录方式 */
+function applyImpTabs() {
+  const ch = $('#impChannel').value;
+  const meta = state.channels.find(c => c.name === ch) || {};
+  const methods = ((meta.capabilities && meta.capabilities.login_methods) || []);
+  // paste / file 是通用方式（任何渠道都能粘贴 cookie 或上传文件）
+  const supported = ['paste', 'file'];
+  ['sms', 'pwd', 'oauth'].forEach(m => { if (methods.indexOf(m) >= 0) supported.push(m); });
+  $$('#impTabs button').forEach(b => {
+    const t = b.dataset.impTab;
+    const ok = supported.indexOf(t) >= 0;
+    b.style.display = ok ? '' : 'none';
+    b.disabled = !ok;
+  });
+  // 当前 tab 若不被支持，切到第一个可用方式
+  if (supported.indexOf(impTab) < 0) switchImpTab(supported[0] || 'paste');
+}
+
 function openImport() {
   if (!state.channels.length) { toast('渠道未加载，请先配置密钥', 'warn'); return; }
   $('#impName').value = '';
@@ -1056,6 +1074,7 @@ function openImport() {
   $('#impProxy').value = '';
   $('#impNote').value = '';
   if (!$('#impChannel').value) $('#impChannel').value = state.channels[0].name;
+  applyImpTabs();
   switchImpTab('paste');
   refreshChannelLogin();
   openModal('m-import');
@@ -2228,7 +2247,7 @@ function wire() {
   $('#impSubmit').addEventListener('click', submitImport);
   $('#impSendSms').addEventListener('click', sendSmsCode);
   $('#impOauthStart').addEventListener('click', startOauth);
-  $('#impChannel').addEventListener('change', () => { refreshChannelLogin(); switchImpTab(impTab); });
+  $('#impChannel').addEventListener('change', () => { applyImpTabs(); refreshChannelLogin(); switchImpTab(impTab); });
 
   // 编辑
   $('#editSave').addEventListener('click', saveEdit);

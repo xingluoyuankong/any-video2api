@@ -4,7 +4,7 @@
 [server]
 host = "127.0.0.1"
 port = 8800
-public_base = "http://127.0.0.1:8800"
+public_base = "https://video.xzx-yuan.ccwu.cc"
 
 [api]
 # 留空则只认数据库里的多密钥（首次启动自动生成一把）
