@@ -116,10 +116,21 @@ class PixverseChannel(Channel):
         return payload
 
     def checkin(self, secret: AccountSecret) -> Dict[str, Any]:
-        """每日签到（实测接口：GET /task/list 查任务 → POST /task/finish 完成）。
+        """每日签到（实测接口，2026-10-16 打通）。
+
+        逆向自 vendor chunk：
+            tI = e => U.get(`/task/list`, e)
+            nI = e => U.post(`/task/finish`, e)
+            handleFinishTask: async e => {
+                let n = taskList.find(t => t.sub_type === e);
+                if (!n || n.progress !== UNFINISHED) return;
+                await nI({ sub_type: e });
+            }
+        枚举：UNFINISHED=1 / FINISHED=2 / CLAIMED=3 / SHARE_VIDEO=4
+        任务项字段：{name, platform, task_type, sub_type, reward, progress, ...}
+        → 提交体是 {"sub_type": <数字>}，且只提交 progress==1 的项。
 
         统一契约：{"ok", "message", "reward"}。
-        JS 逆向自 vendor chunk：tI=e=>U.get(`/task/list`,e); nI=e=>U.post(`/task/finish`,e)
         """
         try:
             tasks = self._get("/task/list", secret=secret)
@@ -129,7 +140,6 @@ class PixverseChannel(Channel):
                 return {"ok": False, "message": "登录态已失效，请重新登录"}
             return {"ok": False, "message": "查询任务列表失败：%s" % s[:100]}
 
-        # 定位可完成的签到类任务
         resp = tasks.get("Resp") if isinstance(tasks, dict) else None
         items: List[Dict[str, Any]] = []
         if isinstance(resp, dict):
@@ -138,54 +148,79 @@ class PixverseChannel(Channel):
                 if isinstance(v, list):
                     items = v
                     break
-            if not items and isinstance(resp.get("task_list"), list):
-                items = resp["task_list"]
         elif isinstance(resp, list):
             items = resp
-
         if not items:
-            # 无任务列表结构：直接把原始响应返回，便于前端/日志核对
             return {"ok": False, "message": "未取到任务列表：%s" % str(tasks)[:150],
                     "raw": tasks}
 
-        # 找一个「可完成/未完成」的任务（签到通常是 daily 类）
-        target = None
-        for it in items:
-            if not isinstance(it, dict):
-                continue
-            status = str(it.get("status") or it.get("Status") or "").lower()
-            finished = it.get("finished") if "finished" in it else it.get("is_finished")
-            if finished in (True, 1) or status in ("finished", "done", "claimed", "2"):
-                continue
-            target = it
-            break
-        if target is None:
-            return {"ok": True, "message": "今日任务已完成（无需重复签到）",
-                    "reward": 0, "raw": tasks}
+        UNFINISHED, FINISHED = 1, 2
 
-        tid = target.get("id") or target.get("Id") or target.get("task_id") or target.get("taskId")
-        payload: Dict[str, Any] = {}
-        if tid is not None:
-            payload["task_id"] = tid
-        # 渠道私有参数透传
-        payload.update(getattr(self, "_checkin_extra", {}) or {})
+        def pick(items_list):
+            out = []
+            for it in items_list:
+                if isinstance(it, dict) and it.get("sub_type") is not None:
+                    out.append(it)
+            return out
+
+        all_tasks = pick(items)
+        total = 0
+        steps: List[str] = []
+
+        # 阶段一：未完成(1) → /task/finish
+        for it in all_tasks:
+            if it.get("progress") != UNFINISHED:
+                continue
+            sub = it["sub_type"]
+            try:
+                res = self._post("/task/finish", {"sub_type": sub}, secret)
+                code = res.get("ErrCode") if isinstance(res, dict) else None
+                if code in (0, None):
+                    steps.append("finish(sub_type=%s) ok" % sub)
+                else:
+                    steps.append("finish(sub_type=%s) %s"
+                                 % (sub, res.get("ErrMsg") if isinstance(res, dict) else res))
+            except Exception as exc:  # noqa: BLE001
+                steps.append("finish(sub_type=%s) 异常 %s" % (sub, str(exc)[:50]))
+
+        # 阶段二：已完成待领取(2) → /reward/claim（领取才真正到账）
         try:
-            res = self._post("/task/finish", payload, secret)
+            after = self._get("/task/list", secret=secret)
+            resp2 = after.get("Resp") if isinstance(after, dict) else None
+            items2 = []
+            if isinstance(resp2, dict):
+                for key in ("TaskList", "task_list", "tasks", "List", "list"):
+                    if isinstance(resp2.get(key), list):
+                        items2 = resp2[key]
+                        break
+            elif isinstance(resp2, list):
+                items2 = resp2
+            for it in pick(items2):
+                if it.get("progress") != FINISHED:
+                    continue
+                sub = it["sub_type"]
+                try:
+                    res = self._post("/reward/claim", {"sub_type": sub}, secret)
+                    code = res.get("ErrCode") if isinstance(res, dict) else None
+                    if code in (0, None):
+                        rw = it.get("reward")
+                        total += int(rw) if isinstance(rw, (int, float)) else 0
+                        steps.append("claim(sub_type=%s) +%s" % (sub, rw))
+                    else:
+                        steps.append("claim(sub_type=%s) %s"
+                                     % (sub, res.get("ErrMsg") if isinstance(res, dict) else res))
+                except Exception as exc:  # noqa: BLE001
+                    steps.append("claim(sub_type=%s) 异常 %s" % (sub, str(exc)[:50]))
         except Exception as exc:  # noqa: BLE001
-            return {"ok": False, "message": "签到提交失败：%s" % str(exc)[:100]}
-        resp2 = res.get("Resp") if isinstance(res, dict) else res
-        reward = 0
-        if isinstance(resp2, dict):
-            for k in ("credits", "reward", "credit", "amount", "bonus"):
-                v = resp2.get(k)
-                if isinstance(v, (int, float)):
-                    reward = int(v)
-                    break
-        ok = bool(isinstance(res, dict) and res.get("ErrCode") in (0, None))
-        return {"ok": ok,
-                "message": "签到成功" if ok else "签到返回：%s" % str(res)[:130],
-                "reward": reward,
-                "raw": res}
+            steps.append("复查任务列表失败: %s" % str(exc)[:60])
+
+        if not steps:
+            return {"ok": True, "message": "今日无可签到任务（可能已完成）",
+                    "reward": 0, "tasks": len(all_tasks)}
+        ok = any(s.startswith("claim(") and "+" in s for s in steps) or \
+             any("ok" in s for s in steps)
+        return {"ok": ok, "message": "; ".join(steps)[:200], "reward": total,
+                "steps": steps}
 
     def _get(self, path: str, params: Optional[Dict[str, Any]] = None,
              secret: Optional[AccountSecret] = None) -> Dict[str, Any]:
@@ -299,16 +334,18 @@ class PixverseChannel(Channel):
     def build_headers(self, secret: AccountSecret, path: str, body: Any = None,
                       extra: Optional[Dict[str, str]] = None) -> Dict[str, str]:
         h = dict(extra or {})
-        token = (secret.extra or {}).get("token") if secret else ""
-        cookie_parts: List[str] = []
-        for k, v in ((secret.cookies or {}) if secret else {}).items():
-            cookie_parts.append(f"{k}={v}")
+        ck = (secret.cookies or {}) if secret else {}
+        # 实测（2026-10-16）：pixverse 只认请求头里的 `token`，光有 Cookie 会返回
+        # 10003 user is not login。登录态令牌就是 cookie 里的 `_ai_token`，
+        # 书签回传 document.cookie 能拿到它（非 HttpOnly），因此这里统一提取。
+        token = (secret.extra or {}).get("token") or ck.get("_ai_token") or ""
+        cookie_parts: List[str] = [f"{k}={v}" for k, v in ck.items()]
         if token and not any(p.startswith("token=") for p in cookie_parts):
             cookie_parts.append(f"token={token}")
         if cookie_parts:
             h["Cookie"] = "; ".join(cookie_parts)
         if token:
-            h["token"] = token  # 双保险：前端为纯 Cookie，header 兼容网关变体
+            h["token"] = token  # 关键：pixverse 网关认 header 的 token
         return h
 
     def submit(self, secret: AccountSecret, req: GenerateRequest) -> SubmitResult:
