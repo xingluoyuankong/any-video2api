@@ -191,5 +191,7 @@ class HailuoChannel(Channel):
     def submit(self, secret: AccountSecret, req: Any) -> Any:
         raise NotImplementedError("海螺渠道在本平台只暴露登录能力；生成请用 E:/API管理工具/hailuoai")
 
-    def poll(self, secret: AccountSecret, upstream_task_id: str, **kw: Any) -> Any:
+    def poll(self, secret: AccountSecret, upstream_task_id: str,
+                    req: Optional["GenerateRequest"] = None,
+                    **kw: Any) -> Any:
         raise NotImplementedError("海螺渠道在本平台只暴露登录能力；生成请用 E:/API管理工具/hailuoai")

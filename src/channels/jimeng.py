@@ -172,7 +172,11 @@ class JimengChannel(Channel):
                "video_mode": 2, "fps": 24, "duration_ms": duration_ms, "idip_meta_list": []}
         if req.resolution:
             inp["resolution"] = req.resolution
-        images = req.images or ([req.image] if req.image else [])
+        images = list(req.images or [])
+        if not images:
+            _single = getattr(req, "image", "") or getattr(req, "image_url", "")
+            if _single:
+                images = [_single]
         if images:
             def img(uri):
                 return {"format": "", "height": 0, "id": str(uuid.uuid4()), "image_uri": uri, "name": "",

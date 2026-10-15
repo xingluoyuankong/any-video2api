@@ -116,6 +116,7 @@ class CreditView:
     allocatable: float = 0.0
     buckets: Dict[str, float] = field(default_factory=dict)
     error: str = ""
+    message: str = ""
     raw: Dict[str, Any] = field(default_factory=dict)
 
 
