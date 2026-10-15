@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -125,6 +125,42 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def oauth_callback_cors(request: Request, call_next):
+    """给 /oauth/callback 单独放开 CORS。
+
+    为什么必须单独放：书签脚本是「在各渠道官网页面的控制台里」发起的 fetch，
+    属于跨域请求（Origin 是 pai.video / coze.cn / jimeng... 等，随渠道而变），
+    而全局 CORSMiddleware 的 allow_origins 只白名单了本机控制台。
+    没有 CORS 头时浏览器会拦掉响应（甚至预检直接失败），用户看到的就是「回调失败」，
+    但请求其实可能已经打到后端并建了号 —— 体验与事实完全对不上。
+
+    只对本端点放开，其余接口维持严格白名单；本端点本身有一次性 state 兜底
+    （见 src/platform/oauth_state.py），不依赖 CORS 做安全边界。
+    """
+    if request.url.path != "/oauth/callback":
+        return await call_next(request)
+
+    origin = request.headers.get("origin") or "*"
+    if request.method == "OPTIONS":
+        return Response(
+            status_code=204,
+            headers={
+                "Access-Control-Allow-Origin": origin,
+                "Access-Control-Allow-Methods": "POST, OPTIONS",
+                "Access-Control-Allow-Headers": "Content-Type",
+                "Access-Control-Allow-Credentials": "true",
+                "Access-Control-Max-Age": "600",
+                "Vary": "Origin",
+            },
+        )
+    resp = await call_next(request)
+    resp.headers["Access-Control-Allow-Origin"] = origin
+    resp.headers["Access-Control-Allow-Credentials"] = "true"
+    resp.headers["Vary"] = "Origin"
+    return resp
 
 
 @app.middleware("http")

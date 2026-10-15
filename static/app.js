@@ -1007,45 +1007,42 @@ async function updateChannelLogin() {
     '</div></div>';
 }
 
-/* 生成授权链接 / 书签脚本（OAuth 方式）—— 列出每个渠道的官网登录链接 + 跳转按钮 */
+/* 生成授权链接 / 书签脚本（OAuth 方式）—— 只渲染当前选中渠道 */
 async function startOauth() {
   const out = $('#impOauthOut');
-  out.innerHTML = '<div class="loading"><div class="spinner"></div>加载各渠道登录链接…</div>';
-  const chans = state.channels || [];
-  if (!chans.length) { out.innerHTML = '<div class="notice warn">渠道未加载</div>'; return; }
   const cur = $('#impChannel').value;
-  const cards = [];
-  for (const ch of chans) {
-    const r = await safe(api('/api/accounts/login/oauth?channel=' + encodeURIComponent(ch.name)));
-    const d = r.ok ? (r.data || {}) : {};
-    const url = d.login_url || '';
-    const isCur = ch.name === cur;
-    const head = '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px">' +
-      '<div><b>' + esc(ch.display_name || ch.name) + '</b> ' +
-      '<span class="muted" style="font-size:12px">' + esc(ch.name) + '</span></div>' +
-      (url
-        ? '<a class="btn xs primary" href="' + esc(url) + '" target="_blank" rel="noopener noreferrer">打开官网登录</a>'
-        : '<span class="muted">无登录链接</span>') +
-      '</div>';
-    const box = url
-      ? '<div class="reveal-box" style="margin-top:8px"><code>' + esc(url) + '</code>' +
-        '<button class="btn xs" data-act="copy-text" data-text="' + esc(url) + '">复制</button></div>'
-      : '';
-    const cb = d.callback_url || '';
-    const bm = d.bookmarklet || '';
-    const cbLine = cb
-      ? '<div class="muted" style="font-size:12px;margin-top:8px">回调地址：<code>' + esc(cb) + '</code></div>'
-      : '';
-    const bmBox = bm
-      ? '<label class="field" style="margin-top:8px"><span>登录后在官网页面执行（F12 → Console 粘贴）</span>' +
-        '<div class="reveal-box"><code style="font-size:11px">' + esc(bm) + '</code>' +
-        '<button class="btn xs" data-act="copy-text" data-text="' + esc(bm) + '">复制</button></div></label>'
-      : '';
-    const hint = d.hint ? '<div class="hint" style="margin-top:6px">' + esc(d.hint) + '</div>' : '';
-    cards.push('<div class="card" style="padding:12px;' +
-      (isCur ? 'border-color:var(--accent)' : '') + '">' + head + box + cbLine + bmBox + hint + '</div>');
-  }
-  out.innerHTML = cards.join('');
+  if (!cur) { out.innerHTML = '<div class="notice warn">请先选择渠道</div>'; return; }
+  const ch = state.channels.find(c => c.name === cur);
+  if (!ch) { out.innerHTML = '<div class="notice warn">渠道未找到</div>'; return; }
+  out.innerHTML = '<div class="loading"><div class="spinner"></div>加载登录链接…</div>';
+
+  const r = await safe(api('/api/accounts/login/oauth?channel=' + encodeURIComponent(cur)));
+  const d = r.ok ? (r.data || {}) : {};
+  const url = d.login_url || '';
+  const head = '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px">' +
+    '<div><b>' + esc(ch.display_name || ch.name) + '</b> ' +
+    '<span class="muted" style="font-size:12px">' + esc(ch.name) + '</span></div>' +
+    (url
+      ? '<a class="btn xs primary" href="' + esc(url) + '" target="_blank" rel="noopener noreferrer">打开官网登录</a>'
+      : '<span class="muted">无登录链接</span>') +
+    '</div>';
+  const box = url
+    ? '<div class="reveal-box" style="margin-top:8px"><code>' + esc(url) + '</code>' +
+      '<button class="btn xs" data-act="copy-text" data-text="' + esc(url) + '">复制</button></div>'
+    : '';
+  const cb = d.callback_url || '';
+  const bm = d.bookmarklet || '';
+  const cbLine = cb
+    ? '<div class="muted" style="font-size:12px;margin-top:8px">回调地址：<code>' + esc(cb) + '</code></div>'
+    : '';
+  const bmBox = bm
+    ? '<label class="field" style="margin-top:8px"><span>登录后在官网页面执行（F12 → Console 粘贴）</span>' +
+      '<div class="reveal-box"><code style="font-size:11px">' + esc(bm) + '</code>' +
+      '<button class="btn xs" data-act="copy-text" data-text="' + esc(bm) + '">复制</button></div></label>'
+    : '';
+  const hint = d.hint ? '<div class="hint" style="margin-top:6px">' + esc(d.hint) + '</div>' : '';
+  out.innerHTML = '<div class="card" style="padding:12px;border-color:var(--accent)">' +
+    head + box + cbLine + bmBox + hint + '</div>';
 }
 
 /* 按渠道能力裁剪导入方式 tab：只展示该渠道真正支持的登录方式 */
