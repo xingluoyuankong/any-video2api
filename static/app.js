@@ -966,21 +966,20 @@ async function refreshChannelLogin() {
   const box = $('#impChannelLogin');
   if (!box) return;
   const ch = $('#impChannel').value;
-  if (!ch) { box.style.display = 'none'; return; }
-  box.style.display = 'flex';
-  box.className = 'notice';
-  box.innerHTML = '<span class="muted">加载官网登录链接…</span>';
+  if (!ch) { box.innerHTML = ''; return; }
+  box.className = '';
+  box.innerHTML = '<span class="muted" style="font-size:12px">加载中…</span>';
   const r = await safe(api('/api/accounts/login/oauth?channel=' + encodeURIComponent(ch)));
   const url = r.ok ? ((r.data || {}).login_url || '') : '';
   if (!url) {
-    box.innerHTML = '<span class="muted">该渠道未提供官网登录链接</span>';
+    box.innerHTML = '<span class="muted" style="font-size:12px">该渠道未提供官网登录链接</span>';
     return;
   }
+  // 渠道选择器右侧：只放按钮（空间有限），URL 挂 title 提示
   box.innerHTML =
-    '<span>官网登录：<a href="' + esc(url) + '" target="_blank" rel="noopener noreferrer">' + esc(url) + '</a></span>' +
-    '<span style="white-space:nowrap">' +
-    '<a class="btn xs primary" href="' + esc(url) + '" target="_blank" rel="noopener noreferrer">打开官网登录</a> ' +
-    '<button class="btn xs" data-act="copy-text" data-text="' + esc(url) + '">复制</button>' +
+    '<span style="display:inline-flex;gap:6px;align-items:center;flex-wrap:wrap">' +
+    '<a class="btn xs primary" href="' + esc(url) + '" target="_blank" rel="noopener noreferrer" title="' + esc(url) + '">打开官网登录</a>' +
+    '<button class="btn xs" data-act="copy-text" data-text="' + esc(url) + '">复制链接</button>' +
     '</span>';
 }
 
@@ -1018,31 +1017,19 @@ async function startOauth() {
 
   const r = await safe(api('/api/accounts/login/oauth?channel=' + encodeURIComponent(cur)));
   const d = r.ok ? (r.data || {}) : {};
-  const url = d.login_url || '';
-  const head = '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px">' +
-    '<div><b>' + esc(ch.display_name || ch.name) + '</b> ' +
-    '<span class="muted" style="font-size:12px">' + esc(ch.name) + '</span></div>' +
-    (url
-      ? '<a class="btn xs primary" href="' + esc(url) + '" target="_blank" rel="noopener noreferrer">打开官网登录</a>'
-      : '<span class="muted">无登录链接</span>') +
-    '</div>';
-  const box = url
-    ? '<div class="reveal-box" style="margin-top:8px"><code>' + esc(url) + '</code>' +
-      '<button class="btn xs" data-act="copy-text" data-text="' + esc(url) + '">复制</button></div>'
-    : '';
   const cb = d.callback_url || '';
   const bm = d.bookmarklet || '';
+  // 官网登录链接已移到「渠道」选择器右侧，这里只放回传相关的脚本
   const cbLine = cb
-    ? '<div class="muted" style="font-size:12px;margin-top:8px">回调地址：<code>' + esc(cb) + '</code></div>'
+    ? '<div class="muted" style="font-size:12px">回调地址：<code>' + esc(cb) + '</code></div>'
     : '';
   const bmBox = bm
-    ? '<label class="field" style="margin-top:8px"><span>登录后在官网页面执行（F12 → Console 粘贴）</span>' +
+    ? '<label class="field" style="margin-top:10px"><span>登录后在官网页面执行（F12 → Console 粘贴）</span>' +
       '<div class="reveal-box"><code style="font-size:11px">' + esc(bm) + '</code>' +
       '<button class="btn xs" data-act="copy-text" data-text="' + esc(bm) + '">复制</button></div></label>'
-    : '';
+    : '<div class="muted" style="font-size:12px">该渠道不支持 Cookie 回传</div>';
   const hint = d.hint ? '<div class="hint" style="margin-top:6px">' + esc(d.hint) + '</div>' : '';
-  out.innerHTML = '<div class="card" style="padding:12px;border-color:var(--accent)">' +
-    head + box + cbLine + bmBox + hint + '</div>';
+  out.innerHTML = '<div class="card" style="padding:12px">' + cbLine + bmBox + hint + '</div>';
 }
 
 /* 按渠道能力裁剪导入方式 tab：只展示该渠道真正支持的登录方式 */

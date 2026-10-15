@@ -222,12 +222,11 @@
   <div class="modal-card wide">
     <div class="modal-head"><h3>导入账号</h3><button class="x" data-close="m-import">×</button></div>
     <div class="modal-body">
-      <div class="inline" style="gap:12px;margin-bottom:14px">
-        <label class="field" style="flex:1;margin:0"><span>渠道</span><select id="impChannel"></select></label>
+      <div class="inline" style="gap:12px;margin-bottom:14px;align-items:flex-end">
+        <label class="field" style="flex:0 0 200px;margin:0"><span>渠道</span><select id="impChannel"></select></label>
+        <div id="impChannelLogin" style="flex:1;min-width:0;margin:0"></div>
         <label class="field" style="flex:1;margin:0"><span>账号名称</span><input type="text" id="impName" placeholder="可留空，默认用账号 ID"></label>
       </div>
-      <div id="impChannelLogin" class="hidden" style="margin-bottom:14px"></div>
-      <div id="impChannelLogin" class="notice" style="margin-bottom:14px;display:flex;justify-content:space-between;align-items:center;gap:10px"></div>
       <div class="tabs" id="impTabs">
         <button data-imp-tab="paste" class="active">粘贴 Cookie</button>
         <button data-imp-tab="file">上传文件</button>
