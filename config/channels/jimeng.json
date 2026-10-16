@@ -35,10 +35,8 @@
     "jimeng-video-minimax-h3": "dreamina_minimax_h3",
     "jimeng-video-happyhorse-1.1": "dreamina_happyhorse_v1_1",
     "jimeng-video-wan-3.0": "dreamina_wan_30",
-    "jimeng-5.0": "high_aes_general_v50",
-    "jimeng-4.5": "high_aes_general_v40l",
-    "jimeng-4.1": "high_aes_general_v41",
-    "jimeng-3.1": "high_aes_general_v30l_art_fangzhou:general_v3.0_18b"
+    "jimeng-3.0-fast": "dreamina_ic_generate_video_model_vgfm_3.0_fast",
+    "jimeng-3.0-pro": "dreamina_ic_generate_video_model_vgfm_3.0_pro"
   },
   "endpoints": {
     "health":        {"method": "GET",  "path": "/passport/account/info/v2"},
