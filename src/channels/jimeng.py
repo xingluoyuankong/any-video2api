@@ -281,6 +281,9 @@ class JimengChannel(Channel):
         videos, images = [], []
         video_keys = {"video_url", "videourl", "play_url", "playurl", "download_url"}
         image_keys = {"cover_url", "coverurl", "image_url", "imageurl"}
+        # 实测（2026-10-16）：视频成片在 item_list[].video.transcoded_video.origin.video_url，
+        # 不带 folder 前缀时会漏。用路径后缀匹配兜底。
+        video_path_suffixes = ("/video_url", "/origin/video_url", "/transcoded_video")
 
         def walk(x, path=""):
             if isinstance(x, dict):
@@ -288,9 +291,14 @@ class JimengChannel(Channel):
                     lk = str(k).lower()
                     p = path + "/" + lk
                     if isinstance(v, str) and v.startswith("http"):
-                        if lk in image_keys:
+                        is_img_host = ("douyinpic" in v or v.endswith(".image")
+                                       or "~tplv-noop.image" in v)
+                        if lk in image_keys and "video" not in p:
                             images.append(v)
-                        elif lk in video_keys or ("/video/" in p and lk == "url"):
+                        elif is_img_host:
+                            images.append(v)   # 实测：封面走 douyinpic CDN / .image 后缀
+                        elif lk in video_keys or "/video/" in p and lk == "url" \
+                                or any(p.endswith(sfx) or sfx in p for sfx in video_path_suffixes):
                             videos.append(v)
                     walk(v, p)
             elif isinstance(x, list):
