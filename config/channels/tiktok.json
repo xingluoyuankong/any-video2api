@@ -3,7 +3,7 @@
   "display_name": "TikTok Symphony (CUE)",
   "kind": "mixed",
   "base_url": "https://ads.tiktok.com",
-  "proxy": "http://Link.rl2.cHI2NlVTNnJnbWsxc09BdAFjyixb20dL:@resin-proxy.xzxyuan.ccwu.cc:2268",
+  "proxy": "http://Link.rl1.VUN-tm1TVixg-NkWaMlJ4vDeKy2H-dP076tSajmSiWm0KsctqEv1Fibt8Bq-Jz3zwZMk_88N0JMhb80TbqcWey8dBHLIYk1aRqkezODBqwksbkSR0VgfN32mrDvHgqwEpRlHcDnIaxpgOCjEBIiwIE63JFfGtDUeryMAcItExCvWuzVTQY7yYYw4aG4Zuy6Z7PU07GwO3aM3TB2wFstyvsR9n1CXaKtli4CawoIDJTMsJYhSL4Q2CYUZ9wclbvSxy4FNl8Zdh3yVSibhoOyucnma7edP:@resin-proxy.xzxyuan.ccwu.cc:2268",
   "timeout": 120,
   "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
   "transports": [
@@ -67,5 +67,5 @@
       "path": "/creative_bff_i18n/api/cue/upload/token"
     }
   },
-  "proxy_note": "Resin 静态出口池（50 条轮换候选）；当前认证 407——导出链接密码被脱敏或已过期，待有效凭据"
+  "proxy_note": "Resin 美国出口 138.199.35.204（ads.tiktok.com 301 通）"
 }
