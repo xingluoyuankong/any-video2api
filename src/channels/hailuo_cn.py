@@ -71,7 +71,7 @@ class HailuoCnChannel(Channel):
             "app_id": "3001",
             "version_code": "22203",
             "biz_id": "0",
-            "lang": "zh",
+            "lang": "zh-Hans",
             "os_name": "Windows",
             "browser_name": "chrome",
             "browser_language": "zh-CN",
@@ -332,74 +332,122 @@ class HailuoCnChannel(Channel):
     def submit(self, secret: AccountSecret, req: GenerateRequest) -> SubmitResult:
         """POST /v2/api/multimodal/generate/video。
 
-        真实 body（前端 chunk 9563 实挖）：
-        {quantity, parameter:{modelID, desc, fileList, useOriginPrompt,
-         resolution, duration, aspectRatio, referenceMode}, videoExtra, projectID}
-        注意 resolution/duration/aspectRatio 用的是 equity.modelControl 里的
-        *Type 枚举（23000: duration=1(6s), resolution=1(720p), aspectRatio=0），
-        不是秒数/分辨率字符串。
+        payload 为 2026-10-16 playwright UI 实抓（真实生成成功，扣 60 积分）：
+        {quantity, parameter:{modelID(字符串名 hailuo3.0-t2v), desc, fileList,
+         useOriginPrompt, resolution("1440"/"720" 字符串像素高), duration(秒数 int),
+         aspectRatio("21:9"/"16:9" 字符串), referenceMode("all-reference")},
+         videoExtra:{promptStruct(富文本 JSON 字符串，必填)}, projectID:"0"}
+        数字 ID（23000 等）仅存在于 equity.modelControl 展示，服务端只认字符串名。
         """
-        # 23000/23010/23001/23011/23102/23021/23200/23204/23210/23217 → duration=1/res=1
-        # 23218 → duration=1/res=1（同枚举，videoCost 12）
-        # aspectRatioType 0 = 默认（16:9 由前端映射，0=原始比例）
-        res_map = {"768p": 1, "720p": 1, "1080p": 2}
-        dur_map = {6: 1, 10: 2}
+        prompt = req.prompt or ""
+        n = len(prompt)
+        prompt_struct = json.dumps(
+            {"value": [{"type": "paragraph", "children": [{"text": prompt}]}],
+             "length": n, "plainLength": n, "rawLength": n},
+            ensure_ascii=False, separators=(",", ":"))
+        # 参数取值来自 /public/v2/api/multimodal/video/model/info（实拉 26KB 清单）：
+        #   resolution 为字符串像素高（23000: "720"；23218: "768"/"1080"；hailuo3.0-t2v: "768"/"1440"）
+        #   duration 为数字秒（23000: 6；hailuo3.0-t2v: 4-15）
+        #   aspectRatio 仅 hailuo3.0-* 支持（"Auto"/"21:9"/"16:9"/"4:3"），老模型传空串
+        res_map = {"768p": "768", "720p": "720", "1080p": "1080", "1440p": "1440", "480p": "480"}
+        res = res_map.get(str(req.resolution or "").lower(), "720")
+        model = req.model or "hailuo3.0-t2v"
+        ar = {"16:9": "16:9", "9:16": "16:9", "1:1": "16:9", "4:3": "4:3",
+              "21:9": "21:9", "auto": "Auto"}.get(str(req.ratio or "16:9").lower(), "16:9")
+        if model.startswith("hailuo3.0") or model.startswith("hailuo_h3"):
+            ar_val = ar
+        else:
+            ar_val = ""   # 老数字模型 aspectRatios 为空
         payload: Dict[str, Any] = {
             "quantity": 1,
             "parameter": {
-                "modelID": str(req.model or ""),
-                "desc": req.prompt or "",
+                "modelID": model,
+                "desc": prompt,
                 "fileList": [],
                 "useOriginPrompt": False,
-                # 服务端 body 绑定要求 duration/resolution/aspectRatio 为字符串
-                #（实测 number 报 Mismatch type string）
-                "resolution": str(res_map.get(str(req.resolution or "").lower(), 1)),
-                "duration": str(dur_map.get(int(req.duration or 6), 1)),
-                "aspectRatio": "0",
+                "resolution": res,
+                "duration": int(req.duration or 6),
+                "aspectRatio": ar_val,
+                "referenceMode": "all-reference",
             },
+            "videoExtra": {"promptStruct": prompt_struct},
+            "projectID": "0",
         }
         if req.mode == "i2v" and req.images:
             payload["parameter"]["fileList"] = [{"uri": req.images[0]}]
         payload["parameter"].update(req.params or {})
         j, _ = self._post("/v2/api/multimodal/generate/video", payload,
                           token=self._tok(secret))
-        data = _unwrap(j)
+        si = (j or {}).get("statusInfo") or {}
+        code = si.get("code")
+        if code not in (0, None):
+            return SubmitResult(accepted=False,
+                                error="hailuo_cn code=%s: %s" % (code, si.get("message")), raw=j)
+        data = _unwrap(j if isinstance(j, dict) else {})
         task_id = ""
         if isinstance(data, dict):
-            for key in ("video_id", "taskId", "task_id", "id", "sl_id"):
+            for key in ("sl_id", "video_id", "taskId", "task_id", "id", "batchID"):
                 if data.get(key):
                     task_id = str(data[key])
                     break
         if not task_id:
-            return SubmitResult(accepted=False, error="未提取到任务 ID: %s" % data, raw=data)
-        return SubmitResult(upstream_task_id=task_id, transport="requests", raw=data)
+            return SubmitResult(accepted=False, error="未提取到任务 ID: %s" % data, raw=j)
+        return SubmitResult(upstream_task_id=task_id, transport="requests", raw=j)
 
     def poll(self, secret: AccountSecret, upstream_task_id: str,
              req: Optional[GenerateRequest] = None) -> PollResult:
-        """作品列表轮询：POST /api/feed/creation/my。"""
-        j, _ = self._post("/api/feed/creation/my", {"limit": 20},
-                          token=self._tok(secret))
+        """双接口轮询（2026-10-16 playwright 实测）：
+
+        - /api/feed/creation/my/processing → 进行中（commonInfo.status/percent）
+        - /api/feed/creation/my → 完成作品（feeds[].commonInfo + 视频字段）
+        任务 ID = commonInfo.id（UI 提交实测 567479785221230599, percent 99）。
+        """
+        tid = str(upstream_task_id)
+
+        # 进行中？
         try:
-            data = _unwrap(j)
+            d = self._post("/api/feed/creation/my/processing", {"limit": 10},
+                           token=self._tok(secret))[0]
+            data = _unwrap(d if isinstance(d, dict) else {})
+            for batch in (data or {}).get("batchFeeds") or []:
+                for feed in batch.get("feeds") or []:
+                    ci = feed.get("commonInfo") or {}
+                    if str(ci.get("id")) == tid or str(batch.get("batchID")) == tid:
+                        pct = float(ci.get("percent") or 0)
+                        return PollResult(status="processing", progress=pct,
+                                          raw={"commonInfo": ci})
+        except Exception:  # noqa: BLE001
+            pass
+
+        # 完成作品列表
+        try:
+            d = self._post("/api/feed/creation/my", {"limit": 20},
+                           token=self._tok(secret))[0]
+            data = _unwrap(d if isinstance(d, dict) else {})
+            for feed in (data or {}).get("feeds") or []:
+                ci = feed.get("commonInfo") or {}
+                fid = str(ci.get("id") or "")
+                if fid != tid and str(ci.get("batchID") or "") != tid:
+                    continue
+                status = int(ci.get("status") or 0)
+                cover = (feed.get("feedCoverInfo") or {}).get("coverURL") or ""
+                # 实测（2026-10-16 UI 生成成功）：status=2 为完成；
+                # 视频在 metaInfo.videoMetaInfo.mediaInfo.url（无水印原片），
+                # downloadURL.{watermarkURL,aiWatermarkURL,hailuoWatermarkURL} 为水印版。
+                mi = ((feed.get("metaInfo") or {}).get("videoMetaInfo") or {}).get("mediaInfo") or {}
+                media = [u for u in (mi.get("url"),) if isinstance(u, str) and u.startswith("http")]
+                if status == 2 and media:
+                    return PollResult(status="success", media=media,
+                                      covers=[cover] if cover else [], raw=feed)
+                if status in (3, 4) or str(ci.get("humanCheckStatus")) in ("2", "3"):
+                    return PollResult(status="failed", error="status=%s" % status, raw=feed)
+                if status == 2 and not media:
+                    # 完成但 mediaInfo 未就绪（极少见），下一轮再取
+                    return PollResult(status="processing", progress=99.0, raw=feed)
+                return PollResult(status="processing",
+                                  progress=float(ci.get("percent") or 0), raw=feed)
         except Exception as exc:  # noqa: BLE001
-            return PollResult(status="failed", error=str(exc), raw=j)
-        items: List[Dict[str, Any]] = []
-        if isinstance(data, dict):
-            for key in ("creations", "list", "items", "videos"):
-                if isinstance(data.get(key), list):
-                    items = data[key]
-                    break
-        target = None
-        for it in items:
-            if str(it.get("id") or it.get("video_id") or "") == str(upstream_task_id):
-                target = it
-                break
-        if target is None:
-            return PollResult(status="processing", raw={"found": False})
-        st = str(target.get("status") or "").lower()
-        from .base import norm_status
-        status = norm_status(st) if st else "processing"
-        media = [u for u in (target.get("video_url"), target.get("url")) if u]
-        covers = [u for u in (target.get("cover_url"), target.get("image_url")) if u]
-        return PollResult(status=status, media=[str(u) for u in media],
-                          covers=[str(u) for u in covers], raw=target)
+            return PollResult(status="processing", raw={"err": str(exc)[:100]})
+        return PollResult(status="processing", raw={"found": False})
+
+

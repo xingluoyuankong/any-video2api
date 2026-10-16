@@ -404,15 +404,46 @@ class PixverseChannel(Channel):
              req: Optional[GenerateRequest] = None) -> PollResult:
         """查询视频生成状态。
 
-        实测结论（2026-10-16）：
-        - /task/list 是【签到任务】接口，与视频生成无关，不能拿来查视频
-        - /web/feeds/detail 用 feed_id（作品页 ID）而非 video_id 查询，
-          提交 /video/t2v 只返回 video_id，两者不同 —— 需要先拿到 feed 列表
-        - 兜底方案：直接轮询生成结果 asset 列表 + credits 变化不可靠，
-          当前以"提交成功即 accepted，状态查询待 feed 列表接口逆向后补"实现，
-          并明确返回 pending 避免误判失败。
+        实测（2026-10-16 playwright 抓包 pai.video 作品页）：
+        - 作品列表 = POST /asset/library/list
+          {tab:"video",asset_source:1,folder_id:0,offset:0,limit:50,...}
+        - **asset_id == 提交返回的 video_id**（一一对应，无需 feed_id 映射）
+        - video_status=5 时 url 为预分配路径（文件未生成，下载 404）
+        - 生成完成后 status 变化且 url 可下载 → success
+        - /web/feeds/detail 的 feed_id 是另一套体系（Resp 恒 null），弃用
         """
-        # 尝试一：feed detail（有的账号 video_id 即 feed_id，值得一试）
+        # 尝试一：作品库列表（已验证：video_id 直接匹配）
+        try:
+            d = self._post("/asset/library/list",
+                {"tab": "video", "asset_source": 1, "folder_id": 0, "offset": 0,
+                 "limit": 50, "sort_order": "", "filter": {}, "current": 1,
+                 "web_offset": 0, "app_offset": 0}, secret)
+            if isinstance(d, dict) and d.get("ErrCode") == 0:
+                items = ((d.get("Resp") or {}).get("data")) or []
+                for it in items:
+                    if str(it.get("asset_id")) != str(upstream_task_id):
+                        continue
+                    vs = str(it.get("video_status") or "")
+                    url = str(it.get("url") or "")
+                    # video_status=5 → 排队/生成中（URL 为预分配，下载 404）
+                    if vs == "5":
+                        return PollResult(status="processing",
+                                          error="", raw=it)  # 官方队列排队中
+                    if url and vs != "5":
+                        # 非排队态且 url 存在：视为完成（成功码枚举官方未文档化，
+                        # 以"非 5 + url 存在"为准；4xx/5xx 判失败由下载层兜底）
+                        fail_hint = str(it.get("fail_reason") or it.get("error") or "")
+                        if fail_hint:
+                            return PollResult(status="failed", error=fail_hint, raw=it)
+                        return PollResult(status="success", media=[url], covers=[
+                            u for u in (it.get("first_frame"), it.get("img_url"),
+                                        it.get("cover_url")) if u], raw=it)
+                    # 其他未知状态 → 保守 pending
+                    return PollResult(status="processing",
+                                      raw=it)  # video_status=%s
+        except Exception:  # noqa: BLE001
+            pass
+        # 尝试二：feed detail（有的账号 video_id 即 feed_id，兜底一试）
         try:
             d = self._post("/web/feeds/detail", {"feed_id": str(upstream_task_id)}, secret)
             if isinstance(d, dict) and d.get("ErrCode") == 0:
@@ -421,13 +452,10 @@ class PixverseChannel(Channel):
                 status = str(item.get("video_status") or item.get("status") or "")
                 url = (item.get("url") or item.get("video_url")
                        or item.get("output_url") or "")
-                # video_status: 实测枚举未定，遇 1/2/3 视为进行中，5/成功字样视为完成
                 if url:
                     return PollResult(status="success", media=[url], raw=item)
                 if status in ("0", "1", "2", "3", "processing", "generating"):
                     return PollResult(status="processing", raw=item)
-                if status in ("4", "5", "success", "done"):
-                    return PollResult(status="success", raw=item)
                 if status in ("6", "7", "failed", "error"):
                     return PollResult(status="failed",
                                       error="pixverse video_status=%s" % status, raw=item)
@@ -435,7 +463,7 @@ class PixverseChannel(Channel):
             pass
         # 查不到就保持 pending（绝不能误判失败，否则触发账号冷却）
         return PollResult(status="processing",
-                          note="pending: feed 列表接口待逆向，无法核验状态")
+                          error="pending: 任务不在作品列表（可能尚未入队）")
 
     def classify_error(self, payload: Any) -> str:
         try:
