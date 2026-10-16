@@ -87,8 +87,23 @@ def _keepalive_verify(account_id: str) -> bool:
     return False
 
 
+def _keepalive_benefits(account_id: str) -> Optional[dict]:
+    """每日权益领取回调（签到类）。verify 成功后被调度器调用。"""
+    row = account_manager.raw(account_id)
+    if not row:
+        return None
+    ch = registry.get(row["channel"])
+    if ch is None or not hasattr(ch, "daily_benefits"):
+        return None
+    try:
+        return ch.daily_benefits(account_manager.secret(account_id))
+    except Exception:  # noqa: BLE001
+        return None
+
+
 keepalive = KeepaliveScheduler(_keepalive_accounts, _keepalive_verify,
-                               interval=config.session_keepalive_interval)
+                               interval=config.session_keepalive_interval,
+                               benefits=_keepalive_benefits)
 
 
 @asynccontextmanager
@@ -241,7 +256,11 @@ def media(bucket: str, name: str):
     target = resolve_local(bucket, name)
     if not target:
         raise HTTPException(status_code=404, detail="media not found")
-    return FileResponse(target)
+    # 文件名带内容 sha1，天然不可变：让 Cloudflare 边缘长期缓存。
+    # 不加这个头 CF 每次都回源（国内访问源站绕美国，10MB 视频要拖半小时）。
+    return FileResponse(target, headers={
+        "Cache-Control": "public, max-age=31536000, immutable",
+    })
 
 
 # ---- 控制台 ----

@@ -88,6 +88,11 @@ class AccountManager:
         s = db.one("SELECT * FROM account_secrets WHERE account_id=?", (row["id"],)) or {}
         credit = db.one("SELECT * FROM account_credits WHERE account_id=?", (row["id"],))
         caps = db.all("SELECT model_id,available,quota,checked_at FROM account_capabilities WHERE account_id=?", (row["id"],))
+        # 生成任务成功/失败统计（jobs 表真实模型调用），区别于保活次数
+        gen = db.one("SELECT "
+                     "SUM(CASE WHEN status='success' THEN 1 ELSE 0 END) AS ok, "
+                     "SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) AS fail "
+                     "FROM jobs WHERE account_id=?", (row["id"],)) or {}
         return {
             **{k: v for k, v in row.items() if k not in ("cooldown_until",)},
             "cooldown_until": row.get("cooldown_until"),
@@ -98,6 +103,8 @@ class AccountManager:
             "has_profile": bool(row.get("profile_path")) and Path(str(row.get("profile_path"))).exists(),
             "credit": credit,
             "capabilities": caps,
+            "gen_ok": int(gen.get("ok") or 0),
+            "gen_fail": int(gen.get("fail") or 0),
         }
 
     def list(self, channel: Optional[str] = None) -> List[dict]:

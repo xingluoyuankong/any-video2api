@@ -294,6 +294,22 @@ class PixverseChannel(Channel):
         )
 
     # ---- 会话 / 额度 ----------------------------------------------------
+    def daily_benefits(self, secret: AccountSecret) -> dict:
+        """每日签到领额度：POST /task/finish {task_type:2, sub_type:7}。
+
+        实测（2026-10-16）：type2/sub7 每日可重复 finish 成功（每日任务），
+        type1/sub1 与 type2/sub6 是看广告/邀请类任务，无法纯接口完成（500）。
+        这是官网"每日任务"的正常用户行为，不会触发风控。
+        """
+        try:
+            d = self._post("/task/finish", {"task_type": 2, "sub_type": 7}, secret)
+            ok = isinstance(d, dict) and d.get("ErrCode") == 0
+            return {"claimed": bool(ok),
+                    "detail": ("签到成功（+30 credit_daily）" if ok
+                               else "签到返回 %s" % json.dumps(d, ensure_ascii=False)[:80])}
+        except Exception as exc:  # noqa: BLE001
+            return {"claimed": False, "detail": "签到异常：%s" % str(exc)[:80]}
+
     def verify(self, secret: AccountSecret):
         from .base import VerifyResult
         try:

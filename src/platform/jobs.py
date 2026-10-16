@@ -236,6 +236,12 @@ class JobWorker:
                               response_json=jd(redact(poll.raw)), finished_at=now(),
                               next_poll_at=None)
             self.store.publish({"type": "job.succeeded", "job": self.store.get(job["id"])})
+            # 生成成功 = 凭证有效：推进保活时间戳，避免保活循环再打一次 verify
+            #（30min 一轮 verify 是上游风控源头，有真实成功流量就该免验）
+            try:
+                _session_keeper.record_activity(aid, "keepalive", True, "job success 免验")
+            except Exception:  # noqa: BLE001
+                pass
             return
         if poll.status == "failed":
             manager.release(aid, False, poll.error_class)

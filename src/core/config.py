@@ -98,7 +98,7 @@ class Config:
     @property
     def session_enabled(self): return bool(self.get("session", "enabled", True))
     @property
-    def session_keepalive_interval(self): return float(self.get("session", "keepalive_interval", 1800))
+    def session_keepalive_interval(self): return float(self.get("session", "keepalive_interval", 21600))  # 6h：30min 一轮 verify 是风控源头
     @property
     def session_lead_time(self): return float(self.get("session", "lead_time", 3600))
     @property

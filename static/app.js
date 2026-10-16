@@ -713,14 +713,12 @@ function accountTable(list) {
       ? badge(sess.action, (STATUS_META[sess.action] && STATUS_META[sess.action].label) || sess.action)
       : '<span class="muted">—</span>';
     const sessTitle = sess
-      ? ('最近成功 ' + relTime(sess.last_ok_at) + '，连续失败 ' + (sess.consecutive_failures || 0) +
-         '，成功/失败 ' + (sess.total_ok || 0) + '/' + (sess.total_fail || 0))
+      ? ('最近成功 ' + relTime(sess.last_ok_at) + '，连续失败 ' + (sess.consecutive_failures || 0))
       : '无会话记录';
-    const sfCell = sess
-      ? '<span class="num" style="color:var(--ok)">' + fmtNum(sess.total_ok || 0) + '</span>' +
-        '<span class="muted"> / </span>' +
-        '<span class="num" style="color:var(--bad)">' + fmtNum(sess.total_fail || 0) + '</span>'
-      : '<span class="muted">—</span>';
+    // 成功/失败 = 该账号真实模型生成任务统计（jobs 表），不是保活次数
+    const sfCell = '<span class="num" style="color:var(--ok)">' + fmtNum(a.gen_ok || 0) + '</span>' +
+      '<span class="muted"> / </span>' +
+      '<span class="num" style="color:var(--bad)">' + fmtNum(a.gen_fail || 0) + '</span>';
 
     // 出口 IP：来自 /api/proxy/accounts 的实测/声明 IP
     const px = state.proxyMap[a.id] || {};

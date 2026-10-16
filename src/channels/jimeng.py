@@ -106,6 +106,7 @@ class JimengChannel(Channel):
         生成鉴权有效。所以必须再打一个商业端点（/commerce/v1/benefits/user_credit）。
         判定：任一段明确 login error / 1015 -> invalid；网络/其它 -> risk 不误杀。
         """
+        health_err = ""
         try:
             r = self._call(secret, "health", None, params={"account_sdk_source": "web"})
             ok = str(r.get("ret", "0")) in ("0", "200", "") if isinstance(r, dict) else False
@@ -114,21 +115,29 @@ class JimengChannel(Channel):
                 if "login" in msg.lower() or str((r or {}).get("ret")) == "1015":
                     return VerifyResult(ok=False, status="invalid",
                                         message="登录态已失效（%s）" % msg, raw=redact(r))
-                return VerifyResult(ok=False, status="risk", message=msg, raw=redact(r))
+                # 实测：passport 会话过期时这里报"会话过期/账号信息错误"（health ret=None），
+                # 但业务会话（credits/generate）仍有效、能正常出片。
+                # 此时不能直接 risk 返回，必须落到第二段用商业接口强校验兜底。
+                health_err = msg
         except UpstreamError as e:
             s = str(e)
             if "401" in s or "未登录" in s or "not logged" in s.lower() or "1015" in s:
                 return VerifyResult(ok=False, status="invalid", message=s)
-            return VerifyResult(ok=False, status="risk", message=s)
+            health_err = s
         except Exception as exc:  # noqa: BLE001
-            return VerifyResult(ok=False, status="risk", message="网络异常，暂不判定失效：%s" % exc)
+            health_err = "网络异常：%s" % exc
         # ---- 第二段：商业接口强校验 ----
         try:
             c = self._call(secret, "credit", None)
             cok = str(c.get("ret", "0")) in ("0", "200", "") if isinstance(c, dict) else False
             if cok:
+                # 商业接口强校验通过 = 业务会话有效（能出片）。
+                # passport health 过期不影响生成（两套会话），标记 active 并注明。
                 return VerifyResult(ok=True, status="active",
-                                    account_type=sniff_account_type(c), raw=redact(c))
+                                    account_type=sniff_account_type(c),
+                                    message=("业务会话有效（passport 会话已过期但可正常生成）"
+                                             if health_err else ""),
+                                    raw=redact(c))
             cmsg = str((c or {}).get("errmsg") or (c or {}).get("message") or "商业接口鉴权失败")
             if "login" in cmsg.lower() or str((c or {}).get("ret")) == "1015":
                 return VerifyResult(ok=False, status="invalid",

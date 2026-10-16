@@ -219,8 +219,12 @@ class ViduChannel(Channel):
         for tag, path in (("credits", "/credit/v1/credits/me"),
                           ("daily", "/iam/v1/users/every-day-credit")):
             try:
-                r = s.get(BASE + path, headers={**self._headers(), "Cookie": cookie},
-                          timeout=20)
+                # 必须走 EdgeOne 挑战重放：直接 s.get 撞上挑战页会拿到 HTML，
+                # 轻则积分解析成 0，重则伴随 403 被 verify 误判"登录态失效"——
+                # 实测这就是 vidu 凭证"反复失效"的根因。
+                r = _edgeone_guarded_request(
+                    s, "GET", BASE + path,
+                    headers={**self._headers(), "Cookie": cookie}, timeout=20)
                 if r.status_code in (401, 403):
                     out_err = "HTTP %s，Cookie 可能已失效" % r.status_code
                     break

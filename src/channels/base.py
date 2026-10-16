@@ -356,6 +356,15 @@ class Channel(abc.ABC):
                content_type: str = "application/octet-stream") -> AssetRef:
         raise NotImplementedError(f"{self.name} 不支持素材上传")
 
+    def daily_benefits(self, secret: AccountSecret) -> dict:
+        """渠道每日免费权益领取（签到/每日积分）。
+
+        保活循环在 verify 成功后调用。返回 {claimed: bool, detail: str}。
+        默认无操作（有的渠道额度自动发放，有的需要官网手动任务）。
+        注意：只做"正常用户一键可完成"的行为，绝不模拟刷量——那是风控加速器。
+        """
+        return {"claimed": False, "detail": "该渠道无自动权益"}
+
     # ---- 在线登录（可选，默认不支持；实现后控制台「导入账号」会出现对应方式）----
     def login_methods(self) -> List[str]:
         """声明本渠道支持的在线登录方式：sms | pwd | oauth。

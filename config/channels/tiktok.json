@@ -3,10 +3,12 @@
   "display_name": "TikTok Symphony (CUE)",
   "kind": "mixed",
   "base_url": "https://ads.tiktok.com",
-  "proxy": "http://127.0.0.1:7897",
+  "proxy": "http://Link.rl2.cHI2NlVTNnJnbWsxc09BdAFjyixb20dL:@resin-proxy.xzxyuan.ccwu.cc:2268",
   "timeout": 120,
   "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-  "transports": ["requests"],
+  "transports": [
+    "requests"
+  ],
   "extra": {
     "login_url": "https://ads.tiktok.com/creative/creativestudio/create",
     "home_url": "https://ads.tiktok.com/"
@@ -32,13 +34,38 @@
     "kontext": "kontext"
   },
   "endpoints": {
-    "verify":       {"method": "GET",  "path": "/creative_bff_i18n/api/cue/get_miniapp_permission_with_allowlist"},
-    "image_submit": {"method": "POST", "path": "/creative_bff_i18n/api/cue/i2v/submit_gen_task/gen_image"},
-    "t2v_submit":   {"method": "POST", "path": "/creative_bff_i18n/api/cue/t2v/create_generate_task"},
-    "i2v_submit":   {"method": "POST", "path": "/creative_bff_i18n/api/cue/i2v/create_generate_task"},
-    "r2v_submit":   {"method": "POST", "path": "/creative_bff_i18n/api/cue/i2v/gen_r2v_video"},
-    "poll":         {"method": "POST", "path": "/creative_bff_i18n/api/cue/generate-task/check"},
-    "history":      {"method": "POST", "path": "/creative_bff_i18n/api/cue/history/tasks"},
-    "upload_token": {"method": "POST", "path": "/creative_bff_i18n/api/cue/upload/token"}
-  }
+    "verify": {
+      "method": "GET",
+      "path": "/creative_bff_i18n/api/cue/get_miniapp_permission_with_allowlist"
+    },
+    "image_submit": {
+      "method": "POST",
+      "path": "/creative_bff_i18n/api/cue/i2v/submit_gen_task/gen_image"
+    },
+    "t2v_submit": {
+      "method": "POST",
+      "path": "/creative_bff_i18n/api/cue/t2v/create_generate_task"
+    },
+    "i2v_submit": {
+      "method": "POST",
+      "path": "/creative_bff_i18n/api/cue/i2v/create_generate_task"
+    },
+    "r2v_submit": {
+      "method": "POST",
+      "path": "/creative_bff_i18n/api/cue/i2v/gen_r2v_video"
+    },
+    "poll": {
+      "method": "POST",
+      "path": "/creative_bff_i18n/api/cue/generate-task/check"
+    },
+    "history": {
+      "method": "POST",
+      "path": "/creative_bff_i18n/api/cue/history/tasks"
+    },
+    "upload_token": {
+      "method": "POST",
+      "path": "/creative_bff_i18n/api/cue/upload/token"
+    }
+  },
+  "proxy_note": "Resin 静态出口池（50 条轮换候选）；当前认证 407——导出链接密码被脱敏或已过期，待有效凭据"
 }

@@ -406,9 +406,12 @@ class KeepaliveScheduler:
     """
 
     def __init__(self, lister: Callable[[], List[dict]],
-                 verifier: Callable[[str], bool], interval: float = 1800) -> None:
+                 verifier: Callable[[str], bool], interval: float = 1800,
+                 benefits: Optional[Callable[[str], Optional[dict]]] = None) -> None:
         self.lister = lister
         self.verifier = verifier
+        # benefits(account_id) -> {claimed, detail}：verify 成功后领每日权益（签到）。
+        self.benefits = benefits
         self.interval = float(interval)
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
@@ -463,6 +466,16 @@ class KeepaliveScheduler:
                 detail = f"{type(exc).__name__}: {exc}"
             keeper.record_activity(aid, "keepalive", ok, detail)
             result["ok" if ok else "failed"] += 1
+            # verify 成功后顺手领每日权益（签到类，正常用户行为）。
+            # 由集成方注入 benefits 回调（session 层不依赖 channels，防循环引用）。
+            if ok and self.benefits is not None:
+                try:
+                    res = self.benefits(aid) or {}
+                    if res.get("claimed"):
+                        keeper.record_activity(aid, "benefits", True,
+                                               str(res.get("detail"))[:80])
+                except Exception:  # noqa: BLE001 签到失败不影响保活状态
+                    pass
         return result
 
 
