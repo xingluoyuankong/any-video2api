@@ -22,8 +22,34 @@
 3. ❌ 轨迹太短（试过 25 步慢轨迹 + 停留 + 抖动）
 4. ❌ Enter 发送（必须点 .send-btn-wrapper button）
 
-## 下一步
-- 读 `captcha.js`（813KB，rmc-captcha/1.0.0.951）定位 drop 判定状态机
-  （pointerdown/up 监听绑定在 `i.u[6][1]` 元素上，捕获模式；状态在 `o.e/o.f/o.k/i.A.u[4353]`）
-- 或尝试 CDP `Input.dispatchDragEvent`（真 HTML5 拖拽）
-- 或逆向验证接口（verify 上报 payload 结构）
+## 破解进展（2026-10-17 凌晨更新）
+
+### ✅ 本地交互 100% 破解
+读 captcha.js（Svelte 编译）定位到核心逻辑：
+```js
+x = function(){                       // 释放处理
+  var o = {result: m.active ? 1 : 0, track: d};
+  m.active && (count++, n.selected = true, n.dragTrack = o, k.push(o), v("change", k));
+  ...
+}
+```
+- **`m.active` = 鼠标是否在 .drag-area 内**（DOM class `active` 同源）
+- 选中后**图片不移走**，只加 `.canvas-container.selected` + badge 显示已选数量
+- **验证：拖拽后 selected 计数正确递增（1→8）、badge 文本正确**
+
+### ❌ 卡点：服务端行为判定
+本地全部正确（selected/badge/提交动作）后点提交 → **服务端判定失败**（刷新新题）。
+上报数据 `dragTrack = {result, track:[{x1,y1,x2,y2,relative_time:0,time}]}` → 服务端分析行为特征。
+
+已试过全部失效：
+1. headless（--disable-blink-features=AutomationControlled + webdriver 隐藏）
+2. **有头模式 + xvfb**（WebGL vendor/renderer 伪造 + plugins 补全）
+3. **人类化轨迹**（三次贝塞尔 + ease-out 变速 + 抖动 + 落点微调）
+4. 答案人工确认正确（如"在城市中能看到的场所"→1,4,6,7,8,9）
+
+### 下一步方案
+1. **人工过验证 + cookie 复用**（最实用）：用户浏览器过一次验证码 → 导出
+   cookie（字节验证通过后种 verify token）→ 服务器复用
+2. 逆向 verify 上报接口（rmc.bytedance.com 的 POST，含加密 payload）
+3. 换豆包 App 协议（不同风控策略）
+4. 深度试错：事件序列补全（pointerover/enter/move 完整链）+ 时间戳随机化
