@@ -1,0 +1,13 @@
+{
+  "adapter": "src.channels.doubao_browser:DoubaoBrowserChannel",
+  "display_name": "豆包（浏览器执行器）",
+  "kind": "video",
+  "base_url": "https://www.doubao.com",
+  "timeout": 300,
+  "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36",
+  "transports": ["browser"],
+  "extra": {
+    "login_url": "https://www.doubao.com/chat/",
+    "note": "网页版 IM 协议 + 图片点选验证码，API 直连不可行；本渠道用 playwright 真实浏览器执行（服务器已装 chromium）"
+  }
+}
