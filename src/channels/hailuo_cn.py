@@ -261,16 +261,25 @@ class HailuoCnChannel(Channel):
 
     def credits(self, secret: AccountSecret) -> CreditView:
         try:
-            j, _ = self._post("/v1/api/user/equity", {}, token=self._tok(secret))
-            data = _unwrap(j)
+            # 实测（2026-10-16）：国内版权益是 **GET** /v1/api/user/equity（POST 404），
+            # 数据在 data.totalCredits（新用户 80 积分），数据外层是 data 不是裸 dict。
+            # 注意 _get 返回单值 dict（不是 tuple），不能解包成 j, _ —— 那会把 dict
+            # 按 key 拆成字符串（credits 一直返回 0 的根因）。
+            j = self._get("/v1/api/user/equity", token=self._tok(secret))
+            data = (j or {}).get("data") if isinstance(j, dict) else None
+            data = _unwrap(data) if not isinstance(data, dict) else data
         except Exception as exc:  # noqa: BLE001
             return CreditView(error=str(exc))
         total = 0.0
         if isinstance(data, dict):
-            for k, v in data.items():
-                if isinstance(v, (int, float)) and "credit" in str(k).lower():
-                    total = max(total, float(v))
-        return CreditView(total=total, allocatable=total, raw=data)
+            v = data.get("totalCredits")
+            if isinstance(v, (int, float)):
+                total = float(v)
+            else:
+                for k, v2 in data.items():
+                    if isinstance(v2, (int, float)) and "credit" in str(k).lower():
+                        total = max(total, float(v2))
+        return CreditView(total=total, allocatable=total, raw=data if isinstance(data, dict) else {})
 
     @staticmethod
     def _tok(secret: Optional[AccountSecret]) -> str:
@@ -321,15 +330,37 @@ class HailuoCnChannel(Channel):
 
     # ---- 生成 -----------------------------------------------------------
     def submit(self, secret: AccountSecret, req: GenerateRequest) -> SubmitResult:
-        """POST /v2/api/multimodal/generate/video（端点已逆向，payload 需登录态实测）。"""
+        """POST /v2/api/multimodal/generate/video。
+
+        真实 body（前端 chunk 9563 实挖）：
+        {quantity, parameter:{modelID, desc, fileList, useOriginPrompt,
+         resolution, duration, aspectRatio, referenceMode}, videoExtra, projectID}
+        注意 resolution/duration/aspectRatio 用的是 equity.modelControl 里的
+        *Type 枚举（23000: duration=1(6s), resolution=1(720p), aspectRatio=0），
+        不是秒数/分辨率字符串。
+        """
+        # 23000/23010/23001/23011/23102/23021/23200/23204/23210/23217 → duration=1/res=1
+        # 23218 → duration=1/res=1（同枚举，videoCost 12）
+        # aspectRatioType 0 = 默认（16:9 由前端映射，0=原始比例）
+        res_map = {"768p": 1, "720p": 1, "1080p": 2}
+        dur_map = {6: 1, 10: 2}
         payload: Dict[str, Any] = {
-            "prompt": req.prompt,
-            "model": req.model or "",
-            "duration": int(req.duration or 6),
+            "quantity": 1,
+            "parameter": {
+                "modelID": str(req.model or ""),
+                "desc": req.prompt or "",
+                "fileList": [],
+                "useOriginPrompt": False,
+                # 服务端 body 绑定要求 duration/resolution/aspectRatio 为字符串
+                #（实测 number 报 Mismatch type string）
+                "resolution": str(res_map.get(str(req.resolution or "").lower(), 1)),
+                "duration": str(dur_map.get(int(req.duration or 6), 1)),
+                "aspectRatio": "0",
+            },
         }
         if req.mode == "i2v" and req.images:
-            payload["first_frame_image"] = req.images[0]
-        payload.update(req.params or {})
+            payload["parameter"]["fileList"] = [{"uri": req.images[0]}]
+        payload["parameter"].update(req.params or {})
         j, _ = self._post("/v2/api/multimodal/generate/video", payload,
                           token=self._tok(secret))
         data = _unwrap(j)
