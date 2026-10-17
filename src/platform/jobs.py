@@ -293,11 +293,68 @@ class JobWorker:
             fields["error"] = note
         self.store.update(job["id"], **fields)
 
+    # ---- 跨渠道降级（2026-10-18）--------------------------------------
+    # 场景：一个渠道 cookie 失效/额度耗尽/上游 5xx，用户只要出片，不该就此失败。
+    # 规则：只在「换渠道可能有效」的错误类型下降级；内容违规换渠道也一样被拒，不降级。
+    # 上限：最多 3 个渠道，避免长尾空转。
+    _FAILOVER_CLASSES = ("auth_or_risk", "quota", "upstream")
+    _FAILOVER_MAX = 3
+
+    def _maybe_failover(self, job: dict, e: UpstreamError) -> bool:
+        if e.error_class not in self._FAILOVER_CLASSES:
+            return False
+        tried = job.get("tried_channels") or ""
+        try:
+            tried_list = json.loads(tried) if tried else []
+        except Exception:
+            tried_list = []
+        if job["channel"] not in tried_list:
+            tried_list.append(job["channel"])
+        if len(tried_list) >= self._FAILOVER_MAX:
+            return False
+        # 候选：注册表内其它渠道，且有可用账号。
+        # 顺序按「近 7 天成功率」降序（同分按成功数），避免把好渠道排到最后、
+        # 先烧掉两个注定失败的渠道再轮到能出片的那个。
+        from ..channels.registry import registry as _reg
+        cands = [n for n in _reg.names() if n not in tried_list]
+        cands = [n for n in cands if manager.pick(n, mode="auto")]
+        try:
+            rows = db.all(
+                "SELECT channel,"
+                " SUM(CASE WHEN status='success' THEN 1 ELSE 0 END) AS ok,"
+                " COUNT(*) AS total FROM jobs"
+                " WHERE created_at > ? GROUP BY channel", (now() - 7 * 86400,)) or []
+            score = {r["channel"]: ((r["ok"] or 0) / max(1, r["total"] or 0),
+                                   r["ok"] or 0) for r in rows}
+            cands.sort(key=lambda n: score.get(n, (0.0, 0)), reverse=True)
+        except Exception:  # noqa: BLE001 统计不可用则保持注册表顺序
+            pass
+        for name in cands:
+            self.store.update(job["id"], channel=name, account_id=None, status="queued",
+                              upstream_task_id=None, transport="requests",
+                              tried_channels=json.dumps(tried_list, ensure_ascii=False),
+                              error="failover: %s -> %s (%s)" % (job["channel"], name, e.error_class),
+                              error_class=None, finished_at=None,
+                              next_poll_at=now(), poll_attempts=0)
+            self.store.publish({"type": "job.failover",
+                                "job": self.store.get(job["id"]),
+                                "from": job["channel"], "to": name})
+            return True
+        return False
+
     def _fail(self, job: dict, e: UpstreamError) -> None:
+        if self._maybe_failover(job, e):
+            return
         self.store.update(job["id"], status="failed", error=str(e)[:500],
                           error_class=e.error_class, finished_at=now(), next_poll_at=None)
         self.store.publish({"type": "job.failed", "job": self.store.get(job["id"])})
 
+
+# 惰性加列：跨渠道降级记录（不修改 db.py 的 SCHEMA，遵循项目约定）
+try:
+    db.execute("ALTER TABLE jobs ADD COLUMN tried_channels TEXT", (), True)
+except Exception:  # noqa: BLE001 已存在则忽略
+    pass
 
 store = JobStore()
 worker = JobWorker(store)

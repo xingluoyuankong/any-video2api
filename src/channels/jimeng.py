@@ -70,7 +70,7 @@ class JimengChannel(Channel):
     def _default_params(self, secret: AccountSecret) -> dict:
         cookies = secret.cookies or {}
         p = {"aid": APPID, "device_platform": "web", "region": "CN",
-             "da_version": "3.3.26", "web_version": "7.5.0", "aigc_features": "app_lip_sync"}
+             "da_version": "3.3.30", "web_version": "7.5.0", "aigc_features": "app_lip_sync"}
         web_id = cookies.get("v2_spipe_web_id") or cookies.get("tea_web_id") or cookies.get("s_v_web_id")
         if web_id:
             p["web_id"] = str(web_id)
@@ -108,8 +108,17 @@ class JimengChannel(Channel):
         """
         health_err = ""
         try:
-            r = self._call(secret, "health", None, params={"account_sdk_source": "web"})
+            r = self._call(secret, "health", {"account_type": "capcut"})
             ok = str(r.get("ret", "0")) in ("0", "200", "") if isinstance(r, dict) else False
+            if ok:
+                # 实测（2026-10-18）：/mweb/v1/cc_data_sync/get_account_info 是**业务会话**校验，
+                # ret=0 即证明生成鉴权有效，直接 active 返回。
+                # 此前 bug：第一段成功后仍继续打 commerce 强校验，而 commerce 现在
+                # 返回 1014 system busy / -3 bad request（需额外 biz 签名），
+                # 导致有效账号被误判 risk/invalid —— 这是 jimeng 长期"invalid"的真因。
+                return VerifyResult(ok=True, status="active",
+                                    account_type=sniff_account_type(r),
+                                    message="业务会话有效", raw=redact(r))
             if not ok:
                 msg = str((r or {}).get("errmsg") or (r or {}).get("message") or "未登录")
                 if "login" in msg.lower() or str((r or {}).get("ret")) == "1015":
@@ -274,8 +283,11 @@ class JimengChannel(Channel):
         r = self._call(secret, "generate", body, params=(req.params or {}).get("params"))
         code = r.get("ret") if isinstance(r, dict) else None
         if str(code) not in ("0", "200", "", "None"):
-            raise UpstreamError(str(r.get("message") or "jimeng submit failed"),
-                                self.classify_error(r), payload=redact(r))
+            # jimeng 的错误文案在 errmsg（不是 message）；此前只读 message，
+            # 导致所有提交失败都显示无信息量的 "jimeng submit failed"。
+            msg = (r.get("errmsg") or r.get("message") or r.get("msg")
+                   or "jimeng submit failed (ret=%s)" % code)
+            raise UpstreamError(str(msg)[:300], self.classify_error(r), payload=redact(r))
         tid = find_values(r, {"history_id", "historyid", "history_record_id", "record_id", "task_id"})
         return SubmitResult(upstream_task_id=str(tid[0]) if tid else "", transport="requests",
                             raw=redact(r))
